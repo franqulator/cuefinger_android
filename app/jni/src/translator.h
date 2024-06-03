@@ -24,7 +24,9 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #include <stdio.h>
 #include <cstring>
 #include <time.h>
-#include <android_fopen.h>
+#ifdef __ANDROID__
+	#include <android_fopen.h>
+#endif
 
 //Portabilität Übersetzer
 #define ZeroMemory(ptr,len) (memset(ptr,0,len))

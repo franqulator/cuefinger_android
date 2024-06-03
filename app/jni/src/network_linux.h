@@ -3,7 +3,7 @@ This file is part of Cuefinger 1
 
 Cuefinger 1 gives you the possibility to remote control Universal Audio's
 Console Application via Network (TCP).
-Copyright ï¿½ 2024 Frank Brempel
+Copyright © 2024 Frank Brempel
 
 Cuefinger 1 is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -21,7 +21,11 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #ifndef _NETWORK_
 #define _NETWORK_
 
-#include <SDL.h>
+#ifdef __ANDROID__
+	#include <SDL.h>
+#else
+	#include <SDL2/SDL.h>
+#endif
 #include <stdio.h>
 #include <unistd.h>
 #include <sys/types.h>

@@ -1,4 +1,4 @@
-//Version 5.0 - 2023-11-24
+//Version 5.1 - 2024-06-03
 
 /*
 This file is part of Cuefinger 1
@@ -229,7 +229,6 @@ GFXEngine::GFXEngine(string title, int x, int y, int width, int height, int flag
 	this->renderer = NULL;
 	this->renderer_width = 0;
 	this->renderer_height = 0;
-	this->offline_render_texture = NULL;
 	this->updateBgraSize = 0;
 	this->p_update_bgra = NULL;
 
@@ -278,7 +277,7 @@ GFXEngine::GFXEngine(string title, int x, int y, int width, int height, int flag
 	}
     render_flags |= SDL_RENDERER_TARGETTEXTURE;
 
-	SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, 0);
+	SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "best");
 	renderer = SDL_CreateRenderer(window, -1, render_flags);
 	if (!renderer) {
 		throw invalid_argument("Error in GFXEngine: SDL_CreateRenderer -> " + string(SDL_GetError()));
@@ -298,14 +297,6 @@ GFXEngine::GFXEngine(string title, int x, int y, int width, int height, int flag
 
 	float xscale, yscale;
 	SDL_RenderGetScale(renderer, &xscale, &yscale);
-
-	//offline render texture for prerendering text
-	offline_render_texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_BGRA32, SDL_TEXTUREACCESS_STREAMING,
-		renderer_width * xscale, renderer_height * yscale);
-	if (!offline_render_texture) {
-		throw invalid_argument("Error in GFXEngine: SDL_CreateTexture -> " + string(SDL_GetError()));
-	}
-	SDL_SetTextureBlendMode(offline_render_texture, SDL_BLENDMODE_BLEND);
 
 	for (int i = 0; i < MAX_LAYERS; i++) {
 		for (int n = 0; n < INIT_JOB_STACK_SIZE; n++) {
@@ -332,19 +323,6 @@ bool GFXEngine::Resize(unsigned int width, unsigned int height) {
 	float xscale, yscale;
 	SDL_RenderGetScale(renderer, &xscale, &yscale);
 
-	if (offline_render_texture) {
-		SDL_DestroyTexture(offline_render_texture);
-		offline_render_texture = NULL;
-	}
-
-	//offline render texture for prerendering text
-	offline_render_texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_BGRA32, SDL_TEXTUREACCESS_STREAMING,
-		renderer_width * xscale, renderer_height * yscale);
-	if (!offline_render_texture) {
-		return false;
-	}
-	SDL_SetTextureBlendMode(offline_render_texture, SDL_BLENDMODE_BLEND);
-
 	return true;
 }
 
@@ -358,11 +336,6 @@ GFXEngine::~GFXEngine() {
 			SAFE_DELETE(jobsList[i].back());
 			jobsList[i].pop_back();
 		}
-	}
-
-	if (offline_render_texture) {
-		SDL_DestroyTexture(offline_render_texture);
-		offline_render_texture = NULL;
 	}
 
 	if (renderer) {
@@ -1442,84 +1415,74 @@ void GFXEngine::_Write(GFXSurface* gs, GFXFont* _font, unsigned int _color, floa
 			float sf_width = (float)sf_text->w / xscale;
 			float sf_height = (float)sf_text->h / yscale;
 
-			if (SDL_LockSurface(sf_text) == 0)
-			{
-				void* pixels;
-				int pitch;
-				SDL_Rect clip_rect = sf_text->clip_rect;
-				clip_rect.w++;
-				clip_rect.h++;
+            SDL_Texture *tx_text = SDL_CreateTextureFromSurface(renderer, sf_text);
+            if(tx_text)
+            {
+                float x_ratio = 1.0f;
+                float y_ratio = 1.0f;
 
-                SDL_Texture *tx_text = SDL_CreateTextureFromSurface(renderer, sf_text);
-                if(tx_text)
+                if (_stretch)
                 {
-                    float x_ratio = 1.0f;
-                    float y_ratio = 1.0f;
-
-                    if (_stretch)
+                    if (!isnan(_stretch->getX()) && !isnan(_stretch->getY()) && sf_width > 0.0f && sf_height > 0.0f)
                     {
-                        if (!isnan(_stretch->getX()) && !isnan(_stretch->getY()) && sf_width > 0.0f && sf_height > 0.0f)
-                        {
-                            x_ratio = _stretch->getX() / sf_width;
-                            y_ratio = _stretch->getY() / sf_height;
-                        }
+                        x_ratio = _stretch->getX() / sf_width;
+                        y_ratio = _stretch->getY() / sf_height;
                     }
-
-                    SDL_FRect destRC;
-                    destRC.x = _x;
-                    destRC.y = _y + (float)line_nr * line_height;
-
-                    destRC.w = sf_width * x_ratio;
-                    destRC.h = sf_height * y_ratio;
-
-                    if ((_alignment & GFX_CENTER))
-                    {
-                        destRC.x -= sf_width / 2.0f;
-                        destRC.x += max_width / 2.0f;
-                    }
-                    else if ((_alignment & GFX_RIGHT))
-                    {
-                        destRC.x -= sf_width;
-                        destRC.x += max_width;
-                    }
-
-                    if (_flags & GFX_ADDITIV)
-                    {
-                        SDL_SetTextureBlendMode(tx_text, SDL_BLENDMODE_ADD);
-                    }
-                    else if (_opacity < 1.0f)
-                    {
-                        SDL_SetTextureBlendMode(tx_text, SDL_BLENDMODE_BLEND);
-                    }
-
-                    SDL_SetTextureAlphaMod(tx_text, (Uint8)(_opacity * 255.0f));
-
-                    SDL_FPoint center;
-                    center.x = destRC.w / 2.0f;
-                    center.y = destRC.h / 2.0f;
-
-                    if (_rotationOffset)
-                    {
-                        center.x += _rotationOffset->getX();
-                        center.y += _rotationOffset->getY();
-                    }
-
-                    int flip = SDL_FLIP_NONE;
-                    if (_flags & GFX_HFLIP)
-                    {
-                        flip = SDL_FLIP_HORIZONTAL;
-                    }
-                    if (_flags & GFX_VFLIP)
-                    {
-                        flip |= SDL_FLIP_VERTICAL;
-                    }
-
-                    SDL_RenderCopyExF(renderer, tx_text, &sf_text->clip_rect, &destRC, RAD2DEG(_rotation), &center, (SDL_RendererFlip)flip);
-
-                    SDL_DestroyTexture(tx_text);
                 }
-				SDL_UnlockSurface(sf_text);
-			}
+
+                SDL_FRect destRC;
+                destRC.x = _x;
+                destRC.y = _y + (float)line_nr * line_height;
+
+                destRC.w = sf_width * x_ratio;
+                destRC.h = sf_height * y_ratio;
+
+                if ((_alignment & GFX_CENTER))
+                {
+                    destRC.x -= sf_width / 2.0f;
+                    destRC.x += max_width / 2.0f;
+                }
+                else if ((_alignment & GFX_RIGHT))
+                {
+                    destRC.x -= sf_width;
+                    destRC.x += max_width;
+                }
+
+                if (_flags & GFX_ADDITIV)
+                {
+                    SDL_SetTextureBlendMode(tx_text, SDL_BLENDMODE_ADD);
+                }
+                else if (_opacity < 1.0f)
+                {
+                    SDL_SetTextureBlendMode(tx_text, SDL_BLENDMODE_BLEND);
+                }
+
+                SDL_SetTextureAlphaMod(tx_text, (Uint8)(_opacity * 255.0f));
+
+                SDL_FPoint center;
+                center.x = destRC.w / 2.0f;
+                center.y = destRC.h / 2.0f;
+
+                if (_rotationOffset)
+                {
+                    center.x += _rotationOffset->getX();
+                    center.y += _rotationOffset->getY();
+                }
+
+                int flip = SDL_FLIP_NONE;
+                if (_flags & GFX_HFLIP)
+                {
+                    flip = SDL_FLIP_HORIZONTAL;
+                }
+                if (_flags & GFX_VFLIP)
+                {
+                    flip |= SDL_FLIP_VERTICAL;
+                }
+
+                SDL_RenderCopyExF(renderer, tx_text, &sf_text->clip_rect, &destRC, RAD2DEG(_rotation), &center, (SDL_RendererFlip)flip);
+
+                SDL_DestroyTexture(tx_text);
+            }
 			SDL_FreeSurface(sf_text);
 		}
 		line_nr++;
