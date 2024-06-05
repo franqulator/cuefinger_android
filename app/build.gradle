@@ -13,13 +13,13 @@ android {
         namespace "franqulator.cuefinger"
     }
     defaultConfig {
-        minSdkVersion 24
+        minSdkVersion 32
         targetSdkVersion 34
         versionCode 1
         versionName "1.0"
         externalNativeBuild {
             ndkBuild {
-                arguments "APP_PLATFORM=android-24"
+                arguments "APP_PLATFORM=android-32"
                 abiFilters 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64'
             }
             // cmake {

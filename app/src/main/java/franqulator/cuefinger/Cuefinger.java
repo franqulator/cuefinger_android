@@ -16,24 +16,13 @@ public class Cuefinger extends SDLActivity {
 
     private AssetManager mgr;
     private native void load(AssetManager mgr);
-    private native void setLockSettings(boolean lockSettings);
-    private native boolean getLockSettings();
-    private native void setLockToMix(String lockToMix);
-    private native String getLockToMix();
-    private native void setReconnect(int lockSettings);
-    private native int getReconnect();
+    private native void loadSettings(String json);
+    private native String getSettingsJSON();
+    private native void loadServerSettings(String json);
+    private native String getServerSettingsJSON();
 
-    private native void setChannelWidth(int channelWidth);
-    private native int getChannelWidth();
-
-    private native void setServer1(String server);
-    private native String getServer1();
-
-    private native void setServer2(String server);
-    private native String getServer2();
-
-    private native void setServer3(String server);
-    private native String getServer3();
+    private native String cleanUp();
+    private native String terminateAllPingThreads();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -41,26 +30,24 @@ public class Cuefinger extends SDLActivity {
         mgr = getResources().getAssets();
         load(mgr);
         sp = getSharedPreferences(pref,0);
-        setLockSettings(sp.getBoolean("lockSettings",false));
-        setLockToMix(sp.getString("lockToMix",""));
-        setReconnect(sp.getInt("reconnect",10000));
-        setChannelWidth(sp.getInt("channelWidth",0));
-        setServer1(sp.getString("server1",""));
-        setServer2(sp.getString("server2",""));
-        setServer3(sp.getString("server3",""));
+        String s = sp.getString("settings","");
+        loadSettings(s);
+        s = sp.getString("serverSettings","");
+        loadServerSettings(s);
     }
 
     @Override
     protected void onPause() {
+
         SharedPreferences.Editor editor = sp.edit();
-        editor.putBoolean("lockSettings", getLockSettings());
-        editor.putString("lockToMix", getLockToMix());
-        editor.putInt("reconnect", getReconnect());
-        editor.putInt("channelWidth", getChannelWidth());
-        editor.putString("server1", getServer1());
-        editor.putString("server2", getServer2());
-        editor.putString("server3", getServer3());
+        editor.putString("settings", getSettingsJSON());
+        editor.putString("serverSettings", getServerSettingsJSON());
         editor.commit();
+        terminateAllPingThreads();
         super.onPause();
+    }
+
+    protected void onDestroy() {
+        cleanUp();
     }
 }
