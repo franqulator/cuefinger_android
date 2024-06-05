@@ -222,9 +222,6 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
     // This is what SDL runs in. It invokes SDL_main(), eventually
     protected static Thread mSDLThread;
 
-    private AssetManager mgr;
-    private static native void load(AssetManager mgr);
-
     protected static SDLGenericMotionListener_API12 getMotionListener() {
         if (mMotionListener == null) {
             if (Build.VERSION.SDK_INT >= 26 /* Android 8.0 (O) */) {
@@ -431,9 +428,6 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
                 SDLActivity.onNativeDropFile(filename);
             }
         }
-
-        mgr = getResources().getAssets();
-        load(mgr);
     }
 
     protected void pauseNativeThread() {

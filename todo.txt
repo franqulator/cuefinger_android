@@ -1,9 +1,0 @@
-code abgleichen und zusammenführen
-gfxengine checken wie write-routine am performantesten ist, ggf. text-surfaces cachen?
-
-preference-page via javaj(?) einfügen und werte verarbeiten
-bug: textgröße bei start falsch, wird manchmal nicht korrekt angepasst
-
-bei drehung wird der mixer kurz teilweise oder verzerrt gezeigt bevor er richtig dargestellt wird
-
-in github einfügen
