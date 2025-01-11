@@ -3,7 +3,7 @@ This file is part of Cuefinger 1
 
 Cuefinger 1 gives you the possibility to remote control Universal Audio's
 Console Application via Network (TCP).
-Copyright © 2024 Frank Brempel
+Copyright ï¿½ 2024 Frank Brempel
 
 Cuefinger 1 is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -33,40 +33,46 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #include <ifaddrs.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <fcntl.h>
+#include <poll.h>
 #include <netdb.h>
 #include <string>
 #include <unistd.h>
 #include <stdexcept>
+#include <vector>
 #include "translator.h"
 
 using namespace std;
 
-#define MAX_CLIENTS	16
 #define TCP_BUFFER_SIZE 512
+#define TCP_TIMEOUT 2000
 
 #define MSG_CLIENT_CONNECTED		1
 #define MSG_CLIENT_DISCONNECTED		2
 #define MSG_CLIENT_CONNECTION_LOST	3
 #define MSG_TEXT					4
 
-bool GetClientIPs(void(*MessageCallback)(string ip));
-string GetComputerNameByIP(string ip);
-
-static int receiveThread(void *param);
-
 class TCPClient
 {
 private:
-	int socketConnect;
+	int sock;
 	SDL_Thread *receiveThreadHandle;
 	bool receiveThreadIsRunning;
 public:
-	TCPClient(string host, string port, void (*MessageCallback)(int,string)); // throws exception
+	TCPClient();
+	TCPClient(const string &host, const string &port, void (*MessageCallback)(int,const string&), int timeout = TCP_TIMEOUT); // throws exception
 	~TCPClient();
-	void Send(string data);
+	bool send(const string &data);
+	int receive(string &msg, int timeout = TCP_TIMEOUT);
+
+	static bool getClientIPs(vector<string>& ips);
+	static string getComputerNameByIP(const string& ip);
+	static bool lookUpServers(const string& ipMask, int start, int end, const string& port, int timeout, vector<string>& servers);
 private:
-	static int receiveThread(void* param);
-	void (*MessageCallback)(int msg, string data);
+	static int SDLCALL receiveThread(void* param);
+	void (*MessageCallback)(int msg, const string &data);
+	static bool setBlock(int sock, bool block);
+	static int connectNonBlock(const string& host, const string& port);
 };
 
 #endif

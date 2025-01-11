@@ -35,10 +35,15 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #include "gfx2d_sdl.h"
 #include "simdjson.h"
 #include <map>
+#include <queue>
+
+#ifdef __ANDROID__
+#include "cuefinger_jni.h"
+#endif
 
 using namespace simdjson;
 
-const string APP_VERSION = "1.3.0";
+const string APP_VERSION = "1.3.8";
 const string APP_NAME = "Cuefinger";
 const string WND_TITLE = APP_NAME + " " + APP_VERSION;
 const string INFO_TEXT = APP_NAME + " " + APP_VERSION + "\n\
@@ -67,20 +72,16 @@ https://github.com/franqulator/cuefinger";
 #define SIMULATION_CHANNEL_COUNT	16
 #define SIMULATION_SENDS_COUNT	6
 
-#define WM_CREATE_SENDBUTTONS		WM_APP+10
-#define WM_UPDATE_CONNECTBUTTONS	WM_APP+8
-#define WM_CONNECTION_LOST			WM_APP+11
-
-#define MAX_UA_DEVICES		16
-#define UA_SENDVALUE_RESOLUTION	0.005 // auflösung um performance zu verbessern und netzwerklast zu reduzieren => entspricht einer Rasterung auf 200 Stufen (1 / 0.005)
+#define UA_SENDVALUE_RESOLUTION	0.002 // auflösung um performance zu verbessern und netzwerklast zu reduzieren => entspricht einer Rasterung auf 500 Stufen (1 / 0.002)
+#define UA_METER_PRECISION	800.0
 
 #define UA_MAX_SERVER_LIST	3 //könnte mehr sein, wenn mir eine GUI-Lösung einfällt
 #define UA_TCP_PORT		"4710"
+#define SERVER_TEST_TIMEOUT			3000
 
 #define UA_MAX_SERVER_LIST_SETTING	7 
 
-#define BTN_CHECKBOX		1
-#define BTN_RADIOBUTTON	2
+#define MUTE_ALL_CHANNEL_INTERVAL	10
 
 #define ID_BTN_CONNECT			50 // +connection index
 #define ID_BTN_INFO				2
@@ -91,26 +92,18 @@ https://github.com/franqulator/cuefinger";
 #define ID_BTN_SELECT_CHANNELS	6
 #define ID_BTN_CHANNELWIDTH		7
 
-#define ID_MENU_FULLSCREEN	4020
-#define ID_MENU_LOG	4021
-
 #define BTN_COLOR_YELLOW	0
 #define BTN_COLOR_RED		1
 #define BTN_COLOR_GREEN		2
 #define BTN_COLOR_BLUE		3
 
-#define DB_UNITY			1.0
+#define UNITY				1.0
 #define METER_THRESHOLD		-76.0
 #define METER_COLOR_BORDER	RGB(90, 90, 120)
 #define METER_COLOR_BG		RGB(30, 30, 30)
 #define METER_COLOR_GREEN	RGB(62, 175, 72)
 #define METER_COLOR_YELLOW	RGB(200, 162, 42)
-
-#define UA_SERVER_RESFRESH_TIME	20000 //in ms
-#define IS_UA_SERVER_REFRESHING (GetTickCount64() - g_server_refresh_start_time < UA_SERVER_RESFRESH_TIME)
-
-#define UA_INPUT	0
-#define UA_AUX		1
+#define METER_COLOR_RED		RGB(250, 62, 42)
 
 #define TOUCH_ACTION_NONE	0
 #define TOUCH_ACTION_LEVEL	1
@@ -120,15 +113,52 @@ https://github.com/franqulator/cuefinger";
 #define TOUCH_ACTION_MUTE	5
 #define TOUCH_ACTION_SELECT	6
 #define TOUCH_ACTION_GROUP	7
+#define TOUCH_ACTION_POST_FADER		8
+#define TOUCH_ACTION_REORDER	9
 
-#define UA_ALL_ENABLED_AND_ACTIVE	0
-#define UA_VISIBLE					1
+#define INPUT	0
+#define AUX		1
+#define MASTER	2
 
 #define SWITCH	-1
 #define ON		1
 #define OFF		0
 
+#define NONE		0x00
+#define PRESSED		0x01
+#define RELEASED	0x02
+#define CHECKED		0x10
+
+#define BUTTON		0
+#define CHECK		1
+#define RADIO		2
+
+#define ALL				0b000111111111
+#define LEVEL			0b000000000001
+#define PAN				0b000000000010
+#define METER			0b000000000100
+#define SOLO			0b000000001000
+#define MUTE			0b000000010000
+#define SEND_POST		0b000000100000
+#define NAME			0b000001000000
+#define STATE			0b000010000000
+#define STEREO			0b000100000000
+#define ALL_MIXES		0b001000000000
+
 #define SAFE_DELETE(a) if( (a) != NULL ) delete (a); (a) = NULL;
+
+#define RED		RGB(140, 5, 5)
+#define GREEN	RGB(0, 100, 20)
+#define BLUE	RGB(0, 50, 180)
+#define YELLOW	RGB(140, 130, 00)
+#define ORANGE	RGB(190, 90, 20)
+#define PURPLE	RGB(70, 0, 150)
+
+#define LOG_INFO        0b0001
+#define LOG_ERROR       0b0010
+#define LOG_EXTENDED    0b0100
+
+void writeLog(int type, const string &s);
 
 class Settings {
 public:
@@ -142,6 +172,8 @@ public:
 	bool extended_logging;
 	unsigned int reconnect_time;
 	bool show_offline_devices;
+	string label_aux1;
+	string label_aux2;
 
 	Settings() {
 		x = 0;
@@ -155,25 +187,47 @@ public:
 		extended_logging = false;
 		reconnect_time = 10000;
 		show_offline_devices = false;
+		label_aux1 = "AUX";
+		label_aux2 = "AUX";
 	}
-	bool load(string *json = NULL);
+	bool load(const string& json = "");
 	bool save();
     string toJSON();
 };
 
 class Button {
-public:
+private:
 	int id;
 	std::string text;
-	SDL_Rect rc;
-	bool checked;
+	float x, y, w, h;
+	int type;
+	int state;
 	bool enabled;
 	bool visible;
-	
-	Button(int _id=0, std::string _text="", int _x=0, int _y=0, int _w=0, int _h=0,
-					bool _checked=false, bool _enabled=true, bool _visible=true);
-	bool IsClicked(SDL_Point *pt);
-	void DrawButton(int color);
+	void (*onStateChanged)(Button *btn);
+public:
+	Button(int type=BUTTON, int id = 0, const string &text = "", float x = 0.0f, float y = 0.0f, float w = 0.0f, float h = 0.0f,
+		bool checked = false, bool enabled = true, bool visible = true, void (*onStateChanged)(Button *btn) = NULL);
+	bool onPress(SDL_Point *pt);
+	bool onRelease();
+	void setCheck(bool check);
+	bool isChecked();
+	int getState();
+	void setVisible(bool visible);
+	bool isVisible();
+	void setEnable(bool enabled);
+	bool isEnabled();
+	void setText(const string &text);
+	string getText();
+	void setBounds(float x, float y, float w, float h);
+	void setSize(float w, float h);
+	float getX();
+	float getY();
+	float getWidth();
+	float getHeight();
+	int getId();
+	bool isHighlighted();
+	void draw(int color, const string &overrideName="");
 };
 
 class Touchpoint {
@@ -189,126 +243,134 @@ public:
 	Touchpoint();
 };
 
-class ChannelIndex {
+class UADevice {
 public:
-	int deviceIndex;
-	int inputIndex;
-	ChannelIndex(int _deviceIndex, int _inputIndex);
-	bool IsValid();
+	string id;
+	bool online;
+	int channelsTotal;
+	UADevice(const string &us_deviceId);
+	~UADevice();
 };
 
-class UADevice;
-class Channel;
-
-class Send {
+class Module {
 public:
-	string ua_id;
-	// string name;
-	double gain;
-	double pan;
-	bool bypass;
-	double meter_level;
-	double meter_level2;
-	Channel *channel;
-	bool subscribed;
-
-	Send();
-	void Clear();
-	void ChangePan(double pan_change, bool absolute = false);//relative
-	void ChangeGain(double gain_change, bool absolute = false);//relative
-	void PressBypass(int state=SWITCH);
-};
-
-class Channel {
-public:
-	string ua_id;
-	string name;
+	string id;
 	double level; // 0 - 4; 1 = unity, 2 = +6 dB, 4 = + 12dB
 	double pan;
-	bool solo;
+	double pan2;
 	bool mute;
 	double meter_level;
 	double meter_level2;
-	UADevice *device;
-	Send *sends;
-	int sendCount;
-	bool stereo;
+	int subscriptions;
+	bool clip;
+	bool clip2;
+	Module(const string &id);
+	virtual ~Module();
+	virtual void changeLevel(double level_change, bool absolute = false) {};
+	virtual void changePan(double pan_change, bool absolute = false) {};
+	virtual void changePan2(double pan_change, bool absolute = false) {};
+	virtual void pressMute(int state = SWITCH) {};
+};
+
+class Channel;
+
+class Send : public Module {
+public:
+	Channel *channel;
+
+	Send(Channel* channel, const string &id);
+	~Send();
+	void init();
+	void updateSubscription(bool subscribe, int flags);
+	void changeLevel(double level_change, bool absolute = false) override; 
+	void changePan(double pan_change, bool absolute = false) override;
+	void pressMute(int state = SWITCH) override;
+};
+
+class Channel : public Module {
+private:
+	string name;
 	string stereoname;
-	double pan2;
+public:
+	int type;
+	UADevice* device;
+	string properties;
+	bool solo;
+	bool post_fader;
+	unordered_map<string, Send*> sendsByName;
+	unordered_map<string, Send*> sendsById;
+	bool stereo;
 	bool hidden;
 	bool enabledByUser;
 	bool active;
-	bool selected_to_show;
-	char label_gfx;
+	int label_gfx;
 	float label_rotation;
 	int fader_group;
-	bool subscribed;
+	bool selected_to_show;
 
 	Touchpoint touch_point;
 
-	Channel();
+	Channel(UADevice* device, const string &id, int type);
 	~Channel();
-	void Clear();
-	void AllocSends(int _sendCount);
-	void LoadSends(int sendIndex, string us_sendId);
-	void SubscribeSend(bool subscribe, int n);
-	bool IsTouchOnFader(Vector2D *pos);
-	bool IsTouchOnPan(Vector2D *pos);
-	bool IsTouchOnPan2(Vector2D *pos);
-	bool IsTouchOnMute(Vector2D *pos);
-	bool IsTouchOnSolo(Vector2D *pos);
-	bool IsTouchOnGroup1(Vector2D *pos);
-	bool IsTouchOnGroup2(Vector2D *pos);
-	void ChangeLevel(double level_change, bool absolute = false); //relative value
-	void ChangePan(double pan_change, bool absolute = false);//relative value
-	void ChangePan2(double pan_change, bool absolute = false);//relative value
-	void PressMute(int state=SWITCH);
-	void PressSolo(int state=SWITCH);
-	bool IsOverriddenShow(bool ignoreStereoname = false);
-	bool IsOverriddenHide(bool ignoreStereoname = false);
+	void init();
+	void updateSubscription(bool subscribe, int flags); // also handles subscrption for sends
+	bool isTouchOnFader(Vector2D *pos);
+	bool isTouchOnPan(Vector2D *pos);
+	bool isTouchOnPan2(Vector2D *pos);
+	bool isTouchOnMute(Vector2D *pos);
+	bool isTouchOnSolo(Vector2D *pos);
+	bool isTouchOnPostFader(Vector2D* pos);
+	bool isTouchOnGroup1(Vector2D *pos);
+	bool isTouchOnGroup2(Vector2D *pos);
+	void pressSolo(int state = SWITCH);
+	void pressPostFader(int state = SWITCH);
+	bool isOverriddenShow();
+	bool isOverriddenHide();
+	bool isVisible(bool only_selected);
+	Send* getSendByName(const string &name);
+	Send* getSendByUAId(const string &id);
+	void updateProperties();
+	string getName();
+	void setName(const string &name);
+	void setStereoname(const string &stereoname);
+	void setStereo(bool stereo);
+	void getColoredGfx(GFXSurface** gsLabel, GFXSurface** gsFader);
+	void draw(float x, float y, float width, float height);
+	Module* getModule(const string &mixBus);
+	void changeLevel(double level_change, bool absolute = false) override;
+	void changePan(double pan_change, bool absolute = false) override;
+	void changePan2(double pan_change, bool absolute = false) override;
+	void pressMute(int state = SWITCH) override;
 };
 
-class UADevice {
-public:
-	string ua_id;
-	bool online;
-	int inputsCount;
-	Channel *inputs;
-	int auxsCount;
-	Channel *auxs;
-
-	UADevice();
-	~UADevice();
-	void LoadDevice(string us_deviceId);
-	void AllocChannels(int type, int _channelCount); // UA_INPUT or UA_AUX
-	bool LoadChannels(int type, int channelIndex, string us_inputId);
-	void SubscribeChannel(bool subscribe, int type, int n);
-	bool IsChannelVisible(int type, int index, bool only_selected);
-	int GetActiveChannelsCount(int type, int flag);
-	void ClearChannels();
-	void Release();
-};
-
-void UA_TCPClientSend(const char* msg);
-bool Connect(int);
-void Disconnect();
-void Draw();
-bool LoadAllGfx();
-void ReleaseAllGfx();
-bool LoadServerSettings(string server_name, Button *btnSend);
-bool LoadServerSettings(string server_name, UADevice *dev);
-bool SaveServerSettings(string server_name);
-void CreateSendButtons(int sz);
-void UpdateConnectButtons();
-int GetAllChannelsCount(bool countWithHidden = true);
-void UpdateSubscriptions();
-void InitSettingsDialog();
-void ReleaseSettingsDialog();
-void CleanUp();
-
+void tcpClientSend(const string &msg);
+bool connect(int);
+void disconnect();
+void draw();
+bool loadAllGfx();
+void releaseAllGfx();
+bool loadServerSettings(const string &server_name, Button *btnSend);
+bool loadServerSettings(const string &server_name);
+bool saveServerSettings(const string &server_name);
+Button *addSendButton(const string &name);
+void updateConnectButtons();
+void updateSubscriptions();
+void initSettingsDialog();
+void releaseSettingsDialog();
+void cleanUp();
+void browseToSelectedChannel(int index);
+int getMiddleSelectedChannel();
+void cleanUpUADevices();
+void updateAllMuteBtnText();
+void setRedrawWindow(bool redraw);
+void updateChannelWidthButton();
+void muteChannels(bool, bool);
+int getActiveChannelsCount(bool onlyVisible);
+void setLoadingState(bool loading);
+bool isLoading();
 
 inline double toDbFS(double linVal) {
-	if (linVal == 0.0)
+	if (linVal <= 0.0)
 		return -144.0;
 	return 20.0 * log10(linVal);
 }
@@ -317,12 +379,14 @@ inline double fromDbFS(double dbVal) {
 	return pow(10.0, dbVal / 20.0);
 }
 
-inline double toMeterScale(double dbVal) {
-	return pow(dbVal, 0.2) / pow(4.0, 0.2);
+inline double toMeterScale(double linVal) {
+	return pow(linVal, 0.2) / pow(4.0, 0.2);
 }
 
-inline double fromMeterScale(double linVal) {
-	return pow(linVal * pow(4.0, 0.2), 1.0 / 0.2);
+inline double fromMeterScale(double taperedVal) {
+	return pow(taperedVal * pow(4.0, 0.2), 1.0 / 0.2);
 }
+
+string shortenString(string s, GFXFont* fnt, float width);
 
 #endif

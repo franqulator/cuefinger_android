@@ -65,6 +65,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #include "vector2d.h"
 #include <deque>
 #include <map>
+#include <unordered_map>
 
 using namespace std;
 
@@ -130,8 +131,9 @@ const int COLLISION_TANGENT_AREA = 8; //Bereich (Rechteck) um den Kollisionpunkt
 #define SAFE_DELETE_ARRAY(a) if( (a) != NULL ) delete[] (a); (a) = NULL;
 #define SAFE_RELEASE(a) if( (a) != NULL ) a->Release(); (a) = NULL;
 
-struct GFXFilter
+class GFXFilter
 {
+public:
 	unsigned int shift_color;
 	float shift_intensity;
 	float brightness;
@@ -151,8 +153,9 @@ struct GFXFilter
 	}
 };
 
-struct GFXFontProperties
+class GFXFontProperties
 {
+public:
 	float shadow_distance;
 	float shadow_direction;
 	unsigned int shadow_color;
@@ -160,21 +163,21 @@ struct GFXFontProperties
 	unsigned int outline_color;
 	float outline_opacity;
 	float outline_strength;
+	GFXFontProperties() {
+		this->shadow_distance = 0.0f;
+		this->shadow_direction = 0.0f;
+		this->shadow_color = 0;
+		this->shadow_opacity = 0.0f;
+		this->outline_color = 0;
+		this->outline_opacity = 0.0f;
+		this->outline_strength = 0.0f;
+	}
 };
 
 class GFXSurface;
 class GFXFont;
+class GFXSpriteBatch;
 
-class GFXSpriteBatch {
-public:
-	float x;
-	float y;
-	Rect rc;
-	float opacity;
-	float rotation;
-	Vector2D rotationOffset;
-	Vector2D stretch;
-};
 
 class GFXJob
 {
@@ -198,7 +201,7 @@ public:
 
 	GFXFont* font;
 	string text;
-	short alignment;
+	int alignment;
 	Vector2D max_size;
 	GFXFontProperties properties;
 
@@ -206,8 +209,43 @@ public:
 
 	int zorder;
 
-	GFXJob();
-	void init();
+	GFXJob() {
+		init();
+		this->x = 0.0f;
+		this->y = 0.0f;
+		this->opacity = 0.0;
+		this->rotation = 0.0f;
+		this->flags = 0;
+		this->color = 0;
+		this->alignment = 0;
+		this->zorder = 0;
+	}
+	inline void init() {
+		this->gs = NULL;
+		this->font = NULL;
+		this->shape = 0;
+		this->spritebatch = NULL;
+	}
+};
+
+class GFXSpriteBatch {
+public:
+	float x;
+	float y;
+	Rect rc;
+	float opacity;
+	float rotation;
+	Vector2D rotationOffset;
+	Vector2D stretch;
+	GFXSpriteBatch(GFXJob *job) {
+		this->x = job->x;
+		this->y = job->y;
+		this->rc = job->rc;
+		this->opacity = job->opacity;
+		this->rotation = job->rotation;
+		this->rotationOffset = job->rotationOffset;
+		this->stretch = job->stretch;
+	}
 };
 
 struct cmp {
@@ -248,8 +286,8 @@ public:
 	int x_surfaces;
 	int y_surfaces;
 	unsigned int *bgra; //bitmap im RAM
-	unsigned int w; //width
-	unsigned int h; //height
+	int w; //width
+	int h; //height
 	bool use_alpha;
 	bool alpha_premultiplied;
 	bool will_delete;
@@ -293,18 +331,33 @@ public:
 
 	GFXFont()
 	{
-		memset(this, 0, sizeof(GFXFont));
+		this->ttf = NULL;
+		this->color = 0;
+		this->will_delete = false;
+		this->will_draw = 0;
+	}
+};
+
+class GFXTextRenderCache {
+public:
+	SDL_Texture* tx;
+	bool used;
+	GFXTextRenderCache(SDL_Texture *tx) {
+		this->used = true;
+		this->tx = tx;
+	}
+	~GFXTextRenderCache() {
+		SDL_DestroyTexture(tx);
 	}
 };
 
 class GFXEngine {
 private:
-	SDL_Window* window=NULL;
-//	SDL_Surface *window_surface=NULL;
+	SDL_Window* window;
 	SDL_Renderer *renderer;
 	int renderer_width, renderer_height;
 
-	unsigned int updateBgraSize;
+	int updateBgraSize;
 	unsigned char *p_update_bgra; // buffer zum berechnen von filtern; wird dynamisch vergößert, falls notwendig
 
 	deque<GFXJob*> jobsList[MAX_LAYERS];
@@ -313,14 +366,16 @@ private:
 	set<GFXSurface*> spriteBatchRequests[MAX_LAYERS];
 	int zorder[MAX_LAYERS];
 
+	map<string, GFXTextRenderCache*> textRenderCache;
+
 public:
 
-	Vector2D* debugScroll;
+//	Vector2D* debugScroll;
 
 	//Grundfunktionen
 	GFXEngine(string title, int x, int y, int w, int h, int flags, SDL_Window **r_window=NULL);
 	~GFXEngine();
-	bool Resize(unsigned int width = 0, unsigned int height = 0);
+	bool Resize(int width = 0, int height = 0);
 	bool Update();
 	void AbortUpdate();
 
@@ -371,7 +426,7 @@ public:
 
 	//Lade- /Speicherfuntionen
 	GFXSurface* LoadGfx(string file);
-	GFXSurface* LoadGfxFromBuffer(unsigned char* data, long size);
+	GFXSurface* LoadGfxFromBuffer(unsigned char* data, size_t size);
 	GFXSurface* LoadTga(string file);
 	bool SaveGfx(GFXSurface* gs, string file);
 	GFXSurface* LoadBmp(string file);
@@ -411,7 +466,7 @@ public:
 	void SetShadow(GFXFont* font, unsigned int color, float opacity, float distance = 1, float direction = M_PIF * 0.75f);
 	void SetOutline(GFXFont* font, float strength, unsigned int color=BLACK, float opacity = 1.0);
 	Vector2D GetTextBlockSize(GFXFont *font, string text, int alignment=GFX_LEFT, float max_width=0);
-	void Write(GFXFont *font, float x, float y, string text, int alignment=GFX_LEFT, Vector2D *max_size=NULL,
+	void Write(GFXFont *font, float x, float y, const string &text, int alignment=GFX_LEFT, Vector2D *max_size=NULL,
 					int flags=0, float opacity=1.0, float rotation=0, Vector2D * rotationOffset = NULL, Vector2D *stretch=NULL, int layer=0);
 
 	void debugDrawLine(Vector2D pos, Vector2D v, unsigned int color, float strength = 3, Vector2D offset = Vector2D(0, 0));
@@ -421,12 +476,12 @@ private:
 	bool _Draw(GFXSurface* gs_dest, GFXSurface* gs_src, int shape, unsigned int color, float pos_x, float pos_y, Rect* _rc = NULL,
 		float opacity = 1.0, float rotation = 0, Vector2D* rotationOffset = NULL, Vector2D* stretch = NULL, int flags = 0, GFXFilter* apply_filter = NULL,
 		int xoffset = 0, int yoffset = 0);
-	void _Write(GFXSurface* gs, GFXFont* _font, unsigned int _color, float _x, float _y, string _text, int _alignment = GFX_LEFT,
+	void _Write(GFXSurface* gs, GFXFont* _font, unsigned int _color, float _x, float _y, const string &_text, int _alignment = GFX_LEFT,
 		Vector2D* _max_size = NULL, float _opacity = 1.0, float _rotation = 0, Vector2D* _rotationOffset = NULL, Vector2D* _stretch = NULL, int _flags = 0);
 	void _DrawAll();
 	int _CreateSpriteBatches(int layer); // returns number of created batches
 	int _CreateSpriteBatch(GFXSurface* gs, int layer); // returns number of sprites in that batch
-	void _AddJob(GFXFont* font, float x, float y, string text, short alignment, Vector2D* max_size,
+	void _AddJob(GFXFont* font, float x, float y, const string &text, int alignment, Vector2D* max_size,
 		int flags, float opacity, float rotation, Vector2D* rotationOffset, Vector2D* stretch, int layer);
 	bool _AddJob(GFXSurface* gs, int shape, unsigned int color, float x, float y, Rect* rc,
 		int flags, float opacity, float rotation, Vector2D* rotationOffset, Vector2D* stretch, int layer);
@@ -445,7 +500,7 @@ private:
 		float rotation = 0, Vector2D* rotationOffset = NULL, float scaleX = 1.0, float scaleY = 1.0);
 
 	//font
-	string _write_get_next_line(GFXFont *fnt,string txt, size_t *txt_ptr, float width, bool autobreak);
+	string _write_get_next_line(GFXFont *fnt,const string &txt, size_t *txt_ptr, float width, bool autobreak);
 
 	// filter
 	bool _ApplyFilter(GFXSurface* gs_src, GFXFilter* apply_filter, bool render_manual = false);

@@ -19,6 +19,7 @@ import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
 import android.view.WindowManager;
+import android.widget.TextView;
 
 
 /**
@@ -44,6 +45,12 @@ public class SDLSurface extends SurfaceView implements SurfaceHolder.Callback,
     public SDLSurface(Context context) {
         super(context);
         getHolder().addCallback(this);
+
+        setContentDescription("Mixer surface");
+
+        TextView label = new TextView(this.getContext());
+        label.setText("Mixer surface");
+        label.setLabelFor(this.getId());
 
         setFocusable(true);
         setFocusableInTouchMode(true);

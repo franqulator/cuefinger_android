@@ -1,6 +1,6 @@
 /*
   Simple DirectMedia Layer
-  Copyright (C) 1997-2024 Sam Lantinga <slouken@libsdl.org>
+  Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -455,12 +455,13 @@ static BOOL update_audio_session(_THIS, SDL_bool open, SDL_bool allow_playandrec
 
         if ((open_playback_devices || open_capture_devices) && !session_active) {
             if (![session setActive:YES error:&err]) {
+                NSString *desc;
                 if ([err code] == AVAudioSessionErrorCodeResourceNotAvailable &&
                     category == AVAudioSessionCategoryPlayAndRecord) {
                     return update_audio_session(this, open, SDL_FALSE);
                 }
 
-                NSString *desc = err.description;
+                desc = err.description;
                 SDL_SetError("Could not activate Audio Session: %s", desc.UTF8String);
                 return NO;
             }
@@ -856,30 +857,39 @@ static int prepare_audioqueue(_THIS)
     SDL_zero(layout);
     switch (this->spec.channels) {
     case 1:
+        // a standard mono stream
         layout.mChannelLayoutTag = kAudioChannelLayoutTag_Mono;
         break;
     case 2:
+        // a standard stereo stream (L R) - implied playback
         layout.mChannelLayoutTag = kAudioChannelLayoutTag_Stereo;
         break;
     case 3:
+        // L R LFE
         layout.mChannelLayoutTag = kAudioChannelLayoutTag_DVD_4;
         break;
     case 4:
+        // front left, front right, back left, back right
         layout.mChannelLayoutTag = kAudioChannelLayoutTag_Quadraphonic;
         break;
     case 5:
-        layout.mChannelLayoutTag = kAudioChannelLayoutTag_MPEG_5_0_A;
+        // L R LFE Ls Rs
+        layout.mChannelLayoutTag = kAudioChannelLayoutTag_DVD_6;
         break;
     case 6:
-        layout.mChannelLayoutTag = kAudioChannelLayoutTag_MPEG_5_1_A;
+        //  L R C LFE Ls Rs
+        layout.mChannelLayoutTag = kAudioChannelLayoutTag_DVD_12;
         break;
     case 7:
-        /* FIXME: Need to move channel[4] (BC) to channel[6] */
-        layout.mChannelLayoutTag = kAudioChannelLayoutTag_MPEG_6_1_A;
+        // L R C LFE Cs Ls Rs
+        layout.mChannelLayoutTag = kAudioChannelLayoutTag_WAVE_6_1;
         break;
     case 8:
-        layout.mChannelLayoutTag = kAudioChannelLayoutTag_MPEG_7_1_A;
+        // L R C LFE Rls Rrs Ls Rs
+        layout.mChannelLayoutTag = kAudioChannelLayoutTag_WAVE_7_1;
         break;
+    default:
+        return SDL_SetError("Unsupported audio channels");
     }
     if (layout.mChannelLayoutTag != 0) {
         result = AudioQueueSetProperty(this->hidden->audioQueue, kAudioQueueProperty_ChannelLayout, &layout, sizeof(layout));

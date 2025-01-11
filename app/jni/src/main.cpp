@@ -20,53 +20,94 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
 #include "main.h"
-// #include <mutex>
+#include <mutex>
 
-//mutex g_redraw_mutex;
+bool g_running;
+bool g_loading;
 
-#define EVENT_CONNECT		1
-#define EVENT_DISCONNECT	2
+mutex g_mutex_serverList;
+mutex g_mutex_uaDevices;
+
+int g_userEventBeginNum = 0;
+#define USER_EVENT_COUNT				15
+#define EVENT_CONNECT					1
+#define EVENT_DISCONNECT				2
+#define EVENT_DEVICES_INITIATE_RELOAD	3
+#define EVENT_DEVICES_LOAD				4
+#define EVENT_SENDS_LOAD				5
+#define EVENT_OUTPUTS_LOAD				6
+#define EVENT_INPUTS_LOAD				7
+#define EVENT_AUXS_LOAD					8
+#define EVENT_CHANNEL_STATE_CHANGED		9
+#define EVENT_UPDATE_SUBSCRIPTIONS		10
+#define EVENT_POST_FADER_METERING		11
+#define EVENT_AFTER_UPDATE_PROPERTIES	12
+#define EVENT_RESET_ORDER				13
+#define EVENT_DEVICE_ONLINE				14
+#define EVENT_UPDATE_CONNECT_BUTTONS	15
+#define EVENT_BROWSE_TO_CHANNEL			16
 
 GFXEngine *gfx = NULL;
 
-SDL_Window *g_window=NULL;
-SDL_TimerID g_timer_network_serverlist = 0;
-SDL_TimerID g_timer_network_reconnect = 0;
-SDL_TimerID g_timer_network_timeout = 0;
-SDL_TimerID g_timer_network_send_timeout_msg = 0;
+SDL_Window *g_window;
+SDL_TimerID g_timer_network_serverlist;
+SDL_TimerID g_timer_network_reconnect;
+SDL_TimerID g_timer_network_timeout;
+SDL_TimerID g_timer_network_send_timeout_msg;
+SDL_TimerID g_timerFlipPage;
+SDL_TimerID g_timerResetOrder;
+SDL_TimerID g_timerUnmuteAll;
+SDL_TimerID g_timerSelectAllChannels;
+SDL_TimerID g_timerReenableMuteAll;
+int g_dragPageFlip;
+int g_resetOrderCountdown;
+int g_unmuteAllCountdown;
+int g_selectAllChannelsCountdown;
 
 Settings g_settings;
 map<string, string> serverSettingsJSON;
 
-string g_msg = "";
+string g_msg;
 
-vector<string> g_ua_server_list;
-string g_ua_server_connected = "";
-int g_ua_server_last_connection = -1;
+vector<string> g_ua_serverList;
+string g_ua_server_connected;
+int g_ua_server_last_connection;
 
-bool g_redraw = true;
-bool g_serverlist_defined = false;
+string g_selectedMixBus;
+
+int g_channels_per_page;
+int g_browseToChannel;
+
+int g_activeChannelsCount;
+int g_visibleChannelsCount;
+
+bool g_redraw;
+bool g_serverlist_defined;
+bool g_reorder_dragging;
 
 //Channel Layout (werden in UpdateLayout-Funktion berechnet)
-const float MIN_BTN_WIDTH = 80.0f;
+const float MIN_BTN_WIDTH = 40.0f;
 const float MAX_BTN_WIDTH = 160.0f;
 const float SPACE_X = 2.0f;
 const float SPACE_Y = 2.0f;
-float g_channel_offset_x = 20.0f;
-float g_channel_offset_y = 40.0f;
+float g_channel_offset_x;
+float g_channel_offset_y;
 float g_fader_label_height;
 float g_fadertracker_width;
 float g_fadertracker_height;
-float g_pantracker_width = 3.0f;
-float g_pantracker_height = 28.0f;
-float g_channel_height = 400.0f;
-float g_channel_width = 100.0f;
-float g_channel_pan_height = 30.0f;
+float g_pantracker_width;
+float g_pantracker_height;
+float g_channel_height;
+float g_channel_width;
+float g_channel_pan_height;
 float g_faderrail_width;
-float g_channel_slider_height;
+float g_faderrail_height;
 
-float g_btn_width = 120.0f;
-float g_btn_height = 60.0f;
+float g_btn_width;
+float g_btn_height;
+float g_settingsBtnWidth;
+float g_settingsBtnHeight;
+float g_settingsLabelWidth;
 float g_channel_btn_size;
 
 float g_channel_label_fontsize;
@@ -76,42 +117,43 @@ float g_offline_fontsize;
 float g_btnbold_fontsize;
 float g_faderscale_fontsize;
 
+float g_settingsDlgWidth;
+float g_settingsDlgHeight;
+
 vector<Button*> g_btnConnect;
-vector<Button*> g_btnSends;
-Button *g_btnSelectChannels=NULL;
-Button *g_btnChannelWidth=NULL;
-Button *g_btnPageLeft=NULL;
-Button *g_btnPageRight=NULL;
-Button *g_btnMix=NULL;
-Button *g_btnSettings=NULL;
-
-Button* g_btnLockSettings = NULL;
-Button* g_btnShowOfflineDevices = NULL;
-Button* g_btnLockToMixMIX = NULL;
-Button* g_btnLockToMixCUE1 = NULL;
-Button* g_btnLockToMixCUE2 = NULL;
-Button* g_btnLockToMixCUE3 = NULL;
-Button* g_btnLockToMixCUE4 = NULL;
-Button* g_btnLockToMixAUX1 = NULL;
-Button* g_btnLockToMixAUX2 = NULL;
-Button* g_btnLockToMixHP = NULL;
-Button* g_btnReconnectOn = NULL;
-
-Button* g_btnServerlistScan = NULL;
-
-Button* g_btnInfo = NULL;
-
+vector<pair<string, Button*>> g_btnSends;
+Button *g_btnSelectChannels;
+Button* g_btnReorderChannels;
+Button *g_btnChannelWidth;
+Button *g_btnPageLeft;
+Button *g_btnPageRight;
+Button *g_btnMix;
+Button *g_btnSettings;
+Button* g_btnMuteAll;
+Button* g_btnLockSettings;
+Button* g_btnPostFaderMeter;
+Button* g_btnShowOfflineDevices;
+Button* g_btnLockToMixMIX;
+Button* g_btnLockToMixCUE[4];
+Button* g_btnLockToMixAUX[2];
+Button* g_btnLabelAUX1[4];
+Button* g_btnLabelAUX2[4];
+Button* g_btnInfo;
+Button* g_btnFullscreen;
+Button* g_btnReconnect;
+Button* g_btnServerlistScan;
+Button* g_btnSimulation;
 vector<Button*> g_btnsServers;
 
-TCPClient *g_tcpClient = NULL;
-int g_page = 0;
+TCPClient *g_tcpClient;
+int g_page;
 
-GFXFont *g_fntMain = NULL;
-GFXFont* g_fntInfo = NULL;
-GFXFont *g_fntChannelBtn = NULL;
-GFXFont *g_fntLabel = NULL;
-GFXFont *g_fntFaderScale = NULL;
-GFXFont *g_fntOffline = NULL;
+GFXFont *g_fntMain;
+GFXFont* g_fntInfo;
+GFXFont *g_fntChannelBtn;
+GFXFont *g_fntLabel;
+GFXFont *g_fntFaderScale;
+GFXFont *g_fntOffline;
 
 GFXSurface *g_gsButtonYellow[2];
 GFXSurface *g_gsButtonRed[2];
@@ -120,23 +162,61 @@ GFXSurface *g_gsButtonBlue[2];
 GFXSurface *g_gsChannelBg;
 GFXSurface *g_gsBgRight;
 GFXSurface *g_gsFaderrail;
-GFXSurface *g_gsFader;
 GFXSurface *g_gsPan;
 GFXSurface *g_gsPanPointer;
-GFXSurface *g_gsLabel[4];
+GFXSurface* g_gsFaderWhite;
+GFXSurface* g_gsFaderBlack;
+GFXSurface* g_gsFaderRed;
+GFXSurface* g_gsFaderGreen;
+GFXSurface* g_gsFaderBlue;
+GFXSurface* g_gsFaderYellow;
+GFXSurface* g_gsFaderOrange;
+GFXSurface* g_gsFaderPurple;
+GFXSurface *g_gsLabelWhite[4];
+GFXSurface* g_gsLabelBlack[4];
+GFXSurface* g_gsLabelRed[4];
+GFXSurface* g_gsLabelGreen[4];
+GFXSurface* g_gsLabelBlue[4];
+GFXSurface* g_gsLabelYellow[4];
+GFXSurface* g_gsLabelOrange[4];
+GFXSurface* g_gsLabelPurple[4];
 
-vector<SDL_Thread*> pingThreadsList;
+bool g_refreshingServerList;
+vector<UADevice*> g_ua_devices;
+unordered_map<string, Channel*> g_channelsById;
+map<int, Channel*> g_channelsInOrder;
+set<Channel*> g_touchpointChannels;
+set<string> g_channelsMutedBeforeAllMute;
 
-unsigned long long g_server_refresh_start_time = -UA_SERVER_RESFRESH_TIME;
-UADevice g_ua_devices[MAX_UA_DEVICES];
+#define LOG_INFO        0b0001
+#define LOG_ERROR       0b0010
+#define LOG_EXTENDED    0b0100
 
-string json_workaround_secure_unicode_characters(string input)
+void writeLog(int type, const string &s) {
+
+	if (!(type & LOG_EXTENDED) || g_settings.extended_logging) {
+		if (type & LOG_INFO) {
+			SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "%s", s.c_str());
+#ifndef __ANDROID__
+			toLog("Info: " + s);
+#endif
+		}
+		else if (type & LOG_ERROR) {
+			SDL_LogError(SDL_LOG_CATEGORY_ERROR, "%s", s.c_str());
+#ifndef __ANDROID__
+			toLog("Error: " + s);
+#endif
+		}
+	}
+}
+
+string json_workaround_secure_unicode_characters(string &input)
 {
-	int sz = 0;
+	size_t sz = 0;
 	do
 	{
 		sz = input.find("\\u", sz);
-		if (sz == -1)
+		if (sz == string::npos)
 			return input;
 
 		input.replace(sz, 2,  "\\\\u");
@@ -146,18 +226,18 @@ string json_workaround_secure_unicode_characters(string input)
 	return input;
 }
 
-string unescape_to_utf8(string input)
+inline string unescape_to_utf8(string &input)
 {
-	int sz = 0;
+	size_t sz = 0;
 	do
 	{
 		sz = input.find("\\u", sz);
-		if (sz == -1)
+		if (sz == string::npos)
 			return input;
 
 		string num = input.substr(sz+2, 4);
 
-		char c = strtol(num.c_str(), NULL, 16);
+		char c = (char)strtol(num.c_str(), NULL, 16);
 
 		input.replace(sz, 6, 1, c);
 		sz++;
@@ -166,76 +246,145 @@ string unescape_to_utf8(string input)
 	return input;
 }
 
-int CalculateMinChannelsPerPage() {
+void pushEvent(int eventId, void* data1=NULL, void* data2=NULL) {
+
+	SDL_Event event;
+	memset(&event, 0, sizeof(SDL_Event));
+	event.type = SDL_USEREVENT;
+	event.user.code = g_userEventBeginNum + eventId;
+	event.user.data1 = data1;
+	event.user.data2 = data2;
+	SDL_PushEvent(&event);
+}
+
+int calculateMinChannelsPerPage() {
 	int w, h;
 	SDL_GetWindowSize(g_window, &w, &h);
 	float mixer_width = (float)w - 2.0f * (MIN_BTN_WIDTH * 1.2f + SPACE_X);
 	float mixer_height = round((float)h / 1.02f);
 
 	float max_channel_width = mixer_height / 3.0f;
-	int channels = floor(mixer_width / max_channel_width);
+	int channels = (int)floor(mixer_width / max_channel_width);
 
 	return channels < 1 ? 1 : channels;
 }
 
-int CalculateAverageChannelsPerPage() {
+int calculateAverageChannelsPerPage() {
 	int w, h;
 	SDL_GetWindowSize(g_window, &w, &h);
 	float mixer_width = (float)w - 2.0f * (MIN_BTN_WIDTH * 1.2f + SPACE_X);
 	float mixer_height = round((float)h / 1.02f);
 
 	float max_channel_width = mixer_height / 5.0f;
-	int channels = floor(mixer_width / max_channel_width);
+	int channels = (int)floor(mixer_width / max_channel_width);
 
 	return channels < 1 ? 1 : channels;
 }
 
-int CalculateMaxChannelsPerPage() {
+int calculateMaxChannelsPerPage() {
 	int w, h;
 	SDL_GetWindowSize(g_window, &w, &h);
 	float mixer_width = (float)w - 2.0f * (MIN_BTN_WIDTH * 1.2f + SPACE_X);
-	float mixer_height = round((float)h / 1.02f);
+	float mixer_height = (float)h / 1.02f;
 
 	float max_channel_width = mixer_height / 9.0f;
-	int channels = floor(mixer_width / max_channel_width);
+	int channels = (int)floor(mixer_width / max_channel_width);
 
 	return channels < 1 ? 1 : channels;
 }
 
-int CalculateChannelsPerPage() {
+int calculateChannelsPerPage() {
 	
 	switch (g_settings.channel_width) {
 	case 1:
-		return CalculateMaxChannelsPerPage();
+		return calculateMaxChannelsPerPage();
 	case 3:
-		return CalculateMinChannelsPerPage();
+		return calculateMinChannelsPerPage();
 	}
 
-	return CalculateAverageChannelsPerPage();
+	return calculateAverageChannelsPerPage();
 }
 
-void UpdateMaxPages() {
-	int max_pages = (GetAllChannelsCount(false) - 1) / CalculateChannelsPerPage();
+int maxPages(bool onlyVisible) {
+	if (g_loading)
+		return -1;
+
+	int maxPages = (getActiveChannelsCount(onlyVisible)) / g_channels_per_page;
+	if ((getActiveChannelsCount(onlyVisible) % g_channels_per_page) == 0) {
+		maxPages--;
+	}
+	return max(0, maxPages);
+}
+
+void updateMaxPages(bool onlyVisible) {
+	if (g_loading)
+		return;
+
+	int max_pages = maxPages(onlyVisible);
 	if (g_page >= max_pages) {
 		g_page = max_pages;
+		g_browseToChannel = getMiddleSelectedChannel();
 	}
+
+	g_btnPageLeft->setEnable(g_page != 0);
+	g_btnPageRight->setEnable(g_page != max_pages);
 }
 
-void UpdateLayout() {
+bool pageLeft() {
+	if (g_loading)
+		return false;
 
-	int channels_per_page = CalculateChannelsPerPage();
+	if (g_page > 0) {
+		g_page--;
+		pushEvent(EVENT_UPDATE_SUBSCRIPTIONS);
+		g_browseToChannel = getMiddleSelectedChannel();
+		setRedrawWindow(true);
+
+		g_btnPageLeft->setEnable(g_page != 0);
+		g_btnPageRight->setEnable(g_page != maxPages(!g_btnSelectChannels->isHighlighted()));
+
+		return true;
+	}
+	return false;
+}
+
+bool pageRight() {
+	if (g_loading)
+		return false;
+
+	if (g_page < maxPages(!g_btnSelectChannels->isHighlighted())) {
+		g_page++;
+		pushEvent(EVENT_UPDATE_SUBSCRIPTIONS);
+		g_browseToChannel = getMiddleSelectedChannel();
+		setRedrawWindow(true);
+
+		g_btnPageLeft->setEnable(g_page != 0);
+		g_btnPageRight->setEnable(g_page != maxPages(!g_btnSelectChannels->isHighlighted()));
+
+		return true;
+	}
+	return false;
+}
+
+void updateLayout(bool force = false) {
+
+	if (g_loading && !force)
+		return;
+
+	g_channels_per_page = calculateChannelsPerPage();
 	
 	int w,h;
 	SDL_GetWindowSize(g_window, &w, &h);
-	float win_width = (float)w;
-	float win_height = (float)h;
+	auto win_width = (float)w;
+	auto win_height = (float)h;
+
 	/*
 	int smaller_btn_height = win_height /7;
 	if (smaller_btn_height < g_btn_height)
 		g_btn_height = smaller_btn_height;
 	*/
 
-	g_btn_width = (win_width / (2.0f + channels_per_page)) / 1.2f;
+	g_btn_width = (win_width / (2.0f + (float)g_channels_per_page)) / 1.2f;
 	if (g_btn_width < MIN_BTN_WIDTH)
 		g_btn_width = MIN_BTN_WIDTH;
 	if (g_btn_width > MAX_BTN_WIDTH)
@@ -246,13 +395,13 @@ void UpdateLayout() {
 	if (g_btn_height > g_btn_width)
 		g_btn_height = g_btn_width;
 
-	g_channel_width = ((win_width - 2.0f * (g_btn_width * 1.2f + SPACE_X)) / channels_per_page);
+	g_channel_width = ((win_width - 2.0f * (g_btn_width * 1.2f + SPACE_X)) / (float)g_channels_per_page);
 	g_channel_height = win_height / 1.02f;
 
-	g_channel_offset_x = (win_width - channels_per_page * g_channel_width) / 2.0f;
-	g_channel_offset_y = (win_height - g_channel_height) / 2.0f;
+	g_channel_offset_x = (win_width - (float)g_channels_per_page * g_channel_width) / 2.0f;
+	g_channel_offset_y = (win_height - (float)g_channel_height) / 2.0f;
 
-	g_channel_btn_size = g_channel_width * 0.4f;
+	g_channel_btn_size = min(g_btn_height * 0.8f, g_channel_width * 0.4f);
 	if (g_channel_btn_size > g_channel_height / 10.0f)
 		g_channel_btn_size = g_channel_height / 10.0f;
 
@@ -276,7 +425,7 @@ void UpdateLayout() {
 		g_pantracker_height = g_channel_width;
 	
 	//reload labelfont if size changed
-	if (g_channel_label_fontsize != g_fader_label_height * 0.5f)
+	if (g_channel_label_fontsize != g_fader_label_height * 0.5f || !g_fntLabel)
 	{
 		g_channel_label_fontsize = g_fader_label_height * 0.5f;
 
@@ -284,26 +433,30 @@ void UpdateLayout() {
 			gfx->DeleteFont(g_fntLabel);
 			g_fntLabel = NULL;
 		}
+        g_fntLabel = gfx->CreateFontFromFile(getDataPath("chelseamarket.ttf"), (int)round(g_channel_label_fontsize * 96.0f / 100.0f));
+        if(!g_fntLabel) {
+            writeLog(LOG_ERROR, "load g_fntLabel failed");
+        }
+    }
 
-		g_fntLabel = gfx->CreateFontFromFile(getDataPath("chelseamarket.ttf"), (int)round(g_channel_label_fontsize * 96.0f / 100.0f));
-	}
-
-	float new_main_fontsize = min(g_btn_height / 3.0f, g_btn_width / 7.0f);
+	float new_main_fontsize = min(g_btn_height / 2.8f, g_btn_width / 6.0f);
 	//reload mainfont if size changed
-	if (g_main_fontsize != new_main_fontsize) {
+	if (g_main_fontsize != new_main_fontsize || !g_fntMain) {
 		g_main_fontsize = new_main_fontsize;
 
 		if (g_fntMain) {
 			gfx->DeleteFont(g_fntMain);
 			g_fntMain = NULL;
 		}
-
-		g_fntMain = gfx->CreateFontFromFile(getDataPath("chakrapetch.ttf"), (int)round(g_main_fontsize * 96.0f / 100.0f), false);
-	}
+        g_fntMain = gfx->CreateFontFromFile(getDataPath("chakrapetch.ttf"), (int)round(g_main_fontsize * 96.0f / 100.0f), false);
+	    if(!g_fntMain) {
+            writeLog(LOG_ERROR, "load fntMain failed");
+        }
+    }
 
 //	float new_info_fontsize = min(win_height / 33.0f, win_width / 33.0f);
 	float new_info_fontsize = min(g_btn_height / 2.0f, g_btn_width / 5.5f);
-	if (g_info_fontsize != new_info_fontsize) {
+	if (g_info_fontsize != new_info_fontsize || !g_fntInfo) {
 		g_info_fontsize = new_info_fontsize;
 		if (g_fntInfo) {
 			gfx->DeleteFont(g_fntInfo);
@@ -311,10 +464,13 @@ void UpdateLayout() {
 		}
 
 		g_fntInfo = gfx->CreateFontFromFile(getDataPath("chakrapetch.ttf"), (int)round(g_info_fontsize * 96.0f / 100.0f));
-	}
+        if(!g_fntInfo) {
+            writeLog(LOG_ERROR, "load g_fntInfo failed");
+        }
+    }
 
 	float new_faderscale_fontsize = min(g_channel_btn_size / 4.0f, g_channel_label_fontsize);
-	if (g_faderscale_fontsize != new_faderscale_fontsize) {
+	if (g_faderscale_fontsize != new_faderscale_fontsize || !g_fntFaderScale) {
 		g_faderscale_fontsize = new_faderscale_fontsize;
 
 		if (g_fntFaderScale) {
@@ -323,10 +479,13 @@ void UpdateLayout() {
 		}
 
 		g_fntFaderScale = gfx->CreateFontFromFile(getDataPath("chakrapetch.ttf"), (int)round(g_faderscale_fontsize * 96.0f / 100.0f));
-	}
+        if(!g_fntFaderScale) {
+            writeLog(LOG_ERROR, "load g_fntFaderScale failed");
+        }
+    }
 
 	float new_btnbold_fontsize = g_channel_btn_size / 3;
-	if (g_btnbold_fontsize != new_btnbold_fontsize) {
+	if (g_btnbold_fontsize != new_btnbold_fontsize || !g_fntChannelBtn) {
 		g_btnbold_fontsize = new_btnbold_fontsize;
 
 		if (g_fntChannelBtn) {
@@ -335,12 +494,15 @@ void UpdateLayout() {
 		}
 
 		g_fntChannelBtn = gfx->CreateFontFromFile(getDataPath("chakrapetch.ttf"), (int)round(g_btnbold_fontsize * 96.0f / 100.0f), false);
-	}
+        if(!g_fntChannelBtn) {
+            writeLog(LOG_ERROR, "load g_fntChannelBtn failed");
+        }
+    }
 
 	float new_offline_fontsize = min(win_width / 6.0f, win_height / 3.0f);
 
 	//reload font if size changed
-	if (g_offline_fontsize != new_offline_fontsize) {
+	if (g_offline_fontsize != new_offline_fontsize || !g_fntOffline) {
 		g_offline_fontsize = new_offline_fontsize;
 
 		if (g_fntOffline) {
@@ -349,133 +511,287 @@ void UpdateLayout() {
 		}
 
 		g_fntOffline = gfx->CreateFontFromFile(getDataPath("changa.ttf"), (int)round(g_offline_fontsize * 96.0f / 100.0f));
-	}
+        if(!g_fntOffline) {
+            writeLog(LOG_ERROR, "load g_fntOffline failed");
+        }
+    }
 
 	//btnleiste links
-	g_btnSettings->rc.x = round(g_channel_offset_x - g_btn_width * 1.18f + SPACE_X);
-	g_btnSettings->rc.y = round(g_channel_offset_y);
-	g_btnSettings->rc.w = round(g_btn_width);
-	g_btnSettings->rc.h = round(g_btn_height);
+	g_btnSettings->setBounds(g_channel_offset_x - g_btn_width * 1.18f + SPACE_X, g_channel_offset_y, g_btn_width, g_btn_height);
+	g_btnMuteAll->setBounds(g_channel_offset_x - g_btn_width * 1.18f + SPACE_X, g_channel_offset_y + g_btn_height + SPACE_Y,
+		g_btn_width, g_btn_height);
 
-	float sends_offset_y = (win_height - g_channel_offset_y - (g_btn_height + SPACE_Y) * g_btnSends.size()) / 2.0f;
-	for (int n = 0; n < g_btnSends.size(); n++)
-	{
-		g_btnSends[n]->rc.x = round(g_channel_offset_x - g_btn_width * 1.18f + SPACE_X);
-		g_btnSends[n]->rc.y = round(sends_offset_y + (g_btn_height + SPACE_Y) * n);
-		g_btnSends[n]->rc.w = round(g_btn_width);
-		g_btnSends[n]->rc.h = round(g_btn_height);
+	float sends_offset_y = (win_height - g_channel_offset_y + g_btn_height - (g_btn_height + SPACE_Y) * (float)g_btnSends.size()) / 2.0f;
+	
+	int n = 0;
+	for(vector<pair<string, Button*>>::iterator it = g_btnSends.begin(); it != g_btnSends.end(); ++it) {
+		it->second->setBounds(g_channel_offset_x - g_btn_width * 1.18f + SPACE_X, sends_offset_y + (g_btn_height + SPACE_Y) * (float)n,
+			g_btn_width, g_btn_height);
+		n++;
 	}
 
-	g_btnMix->rc.x = round(g_channel_offset_x - g_btn_width * 1.18f + SPACE_X);
-	g_btnMix->rc.y = round(win_height - g_channel_offset_y - g_btn_height);
-	g_btnMix->rc.w = round(g_btn_width);
-	g_btnMix->rc.h = round(g_btn_height);
+	g_btnMix->setBounds(g_channel_offset_x - g_btn_width * 1.18f + SPACE_X, win_height - g_channel_offset_y - g_btn_height,
+		g_btn_width, g_btn_height);
 
 	//btnleiste rechts
-	for (int n = 0; n < g_btnConnect.size(); n++)
+	g_btnSimulation->setBounds(win_width - g_channel_offset_x + SPACE_X + g_btn_width * 0.13f, g_channel_offset_y,
+		g_btn_width, g_btn_height);
+	for (int n = 0; n < (int)g_btnConnect.size(); n++)
 	{
-		g_btnConnect[n]->rc.x = round(win_width - g_channel_offset_x + SPACE_X + g_btn_width * 0.13f);
-		g_btnConnect[n]->rc.y = round(g_channel_offset_y + n * (g_btn_height + SPACE_Y));
-		g_btnConnect[n]->rc.w = round(g_btn_width);
-		g_btnConnect[n]->rc.h = round(g_btn_height);
+		g_btnConnect[n]->setBounds(win_width - g_channel_offset_x + SPACE_X + g_btn_width * 0.13f, g_channel_offset_y + (float)n * (g_btn_height + SPACE_Y),
+			g_btn_width, g_btn_height);
 	}
 
-	g_btnSelectChannels->rc.x = round(win_width - g_channel_offset_x + SPACE_X + g_btn_width * 0.13f);
-	g_btnSelectChannels->rc.y = round(win_height / 2.0f - (g_btn_height + SPACE_Y / 2.0f));
-	g_btnSelectChannels->rc.w = round(g_btn_width);
-	g_btnSelectChannels->rc.h = round(g_btn_height);
+	g_btnSelectChannels->setBounds(win_width - g_channel_offset_x + SPACE_X + g_btn_width * 0.13f, win_height / 2.0f - (g_btn_height + SPACE_Y / 2.0f),
+		g_btn_width, g_btn_height);
 
-	g_btnChannelWidth->rc.x = round(win_width - g_channel_offset_x + SPACE_X + g_btn_width * 0.13f);
-	g_btnChannelWidth->rc.y = round(win_height - g_channel_offset_y - 3.0f * g_btn_height - g_main_fontsize - SPACE_Y * 3.0f);
-	g_btnChannelWidth->rc.w = round(g_btn_width);
-	g_btnChannelWidth->rc.h = round(g_btn_height);
+	g_btnReorderChannels->setBounds(win_width - g_channel_offset_x + SPACE_X + g_btn_width * 0.13f, 
+		win_height / 2.0f - (g_btn_height + SPACE_Y / 2.0f) + g_btn_height + SPACE_Y,
+		g_btn_width, g_btn_height);
 
-	g_btnPageLeft->rc.x = round(win_width - g_channel_offset_x + SPACE_X + g_btn_width * 0.13f);
-	g_btnPageLeft->rc.y = round(win_height - g_channel_offset_y - 2.0f * g_btn_height - SPACE_Y);
-	g_btnPageLeft->rc.w = round(g_btn_width);
-	g_btnPageLeft->rc.h = round(g_btn_height);
+	g_btnChannelWidth->setBounds(win_width - g_channel_offset_x + SPACE_X + g_btn_width * 0.13f,
+		win_height - g_channel_offset_y - 3.0f * g_btn_height - g_main_fontsize - SPACE_Y * 3.0f,
+		g_btn_width, g_btn_height);
 
-	g_btnPageRight->rc.x = round(win_width - g_channel_offset_x + SPACE_X + g_btn_width * 0.13f);
-	g_btnPageRight->rc.y = round(win_height - g_channel_offset_y - g_btn_height);
-	g_btnPageRight->rc.w = round(g_btn_width);
-	g_btnPageRight->rc.h = round(g_btn_height);
+	g_btnPageLeft->setBounds(win_width - g_channel_offset_x + SPACE_X + g_btn_width * 0.13f,
+		win_height - g_channel_offset_y - 2.0f * g_btn_height - SPACE_Y,
+		g_btn_width, g_btn_height);
 
-	g_btnLockSettings->rc.w = round(g_btn_width);
-	g_btnLockSettings->rc.h = round(g_btn_height / 2.0f);
+	g_btnPageRight->setBounds(win_width - g_channel_offset_x + SPACE_X + g_btn_width * 0.13f,
+		win_height - g_channel_offset_y - g_btn_height,
+		g_btn_width, g_btn_height);
 
-	g_btnShowOfflineDevices->rc.w = round(g_btn_width);
-	g_btnShowOfflineDevices->rc.h = round(g_btn_height / 2.0f);
+	//settings dialog
+	g_settingsLabelWidth = 8.0f * g_main_fontsize;
+	g_settingsLabelWidth = min(g_settingsLabelWidth, (win_width - g_channel_offset_x) / 3.0f);
+	g_settingsBtnWidth = (win_width - g_channel_offset_x - g_settingsLabelWidth - 40.0f) / 2.0f;
+	g_settingsBtnHeight = (win_height - 160.0f) / 15.0f;
+	g_settingsBtnWidth = min(g_settingsBtnWidth, g_settingsBtnHeight * 4.0f);
 
-	g_btnLockToMixMIX->rc.w = round(g_btn_width);
-	g_btnLockToMixMIX->rc.h = round(g_btn_height / 2.0f);
-	g_btnLockToMixHP->rc.w = round(g_btn_width);
-	g_btnLockToMixHP->rc.h = round(g_btn_height / 2.0f);
-	g_btnLockToMixAUX1->rc.w = round(g_btn_width);
-	g_btnLockToMixAUX1->rc.h = round(g_btn_height / 2.0f);
-	g_btnLockToMixAUX2->rc.w = round(g_btn_width);
-	g_btnLockToMixAUX2->rc.h = round(g_btn_height / 2.0f);
-	g_btnLockToMixCUE1->rc.w = round(g_btn_width);
-	g_btnLockToMixCUE1->rc.h = round(g_btn_height / 2.0f);
-	g_btnLockToMixCUE2->rc.w = round(g_btn_width);
-	g_btnLockToMixCUE2->rc.h = round(g_btn_height / 2.0f);
-	g_btnLockToMixCUE3->rc.w = round(g_btn_width);
-	g_btnLockToMixCUE3->rc.h = round(g_btn_height / 2.0f);
-	g_btnLockToMixCUE4->rc.w = round(g_btn_width);
-	g_btnLockToMixCUE4->rc.h = round(g_btn_height / 2.0f);
+	g_settingsBtnWidth = min(g_settingsBtnWidth, g_btn_width * 2.0f);
+	g_settingsBtnHeight = min(g_settingsBtnHeight, g_btn_height);
 
-	g_btnReconnectOn->rc.w = round(g_btn_width);
-	g_btnReconnectOn->rc.h = round(g_btn_height / 2.0f);
+	float x = g_channel_offset_x + 20.0f;
+	float y = 20.0f;
+	float vspace = 20.0f;
 
-	g_btnServerlistScan->rc.w = round(g_btn_width);
-	g_btnServerlistScan->rc.h = round(g_btn_height / 2.0f);
+	g_btnInfo->setBounds(x + g_settingsLabelWidth + g_settingsBtnWidth, y, g_settingsBtnWidth, g_settingsBtnHeight);
+	g_btnFullscreen->setBounds(x + g_settingsLabelWidth, y, g_settingsBtnWidth, g_settingsBtnHeight);
+	g_btnLockSettings->setBounds(x, y, g_settingsLabelWidth, g_settingsBtnHeight);
+	y += g_settingsBtnHeight + 2.0f + vspace;
 
-	g_btnInfo->rc.x = g_channel_offset_x + 20.0f;
-	g_btnInfo->rc.y = 20.0f;
-	g_btnInfo->rc.w = round(g_btn_width);
-	g_btnInfo->rc.h = round(g_btn_height / 2.0f);
+	g_btnLockToMixMIX->setBounds(x + g_settingsLabelWidth, y, g_settingsBtnWidth / 2.0f, g_settingsBtnHeight);
+	for (int n = 0; n < 2; n++) {
+		g_btnLockToMixAUX[n]->setBounds(x + g_settingsLabelWidth + (float)(1 + n) * g_settingsBtnWidth / 2.0f,
+			y, g_settingsBtnWidth / 2.0f, g_settingsBtnHeight);
+	}
+	y += g_settingsBtnHeight + 2.0f;
+	for (int n = 0; n < 4; n++) {
+		g_btnLockToMixCUE[n]->setBounds(x + g_settingsLabelWidth + (float)n * g_settingsBtnWidth / 2.0f, y,
+			g_settingsBtnWidth / 2.0f, g_settingsBtnHeight);
+	}
+
+	y += g_settingsBtnHeight + 2.0f + vspace;
+
+	for (int n = 0; n < 4; n++) {
+		g_btnLabelAUX1[n]->setBounds(x + g_settingsLabelWidth + (float)n * g_settingsBtnWidth / 2.0f, y,
+			g_settingsBtnWidth / 2.0f, g_settingsBtnHeight);
+	}
+
+	y += g_settingsBtnHeight + 2.0f;
+
+	for (int n = 0; n < 4; n++) {
+		g_btnLabelAUX2[n]->setBounds(x + g_settingsLabelWidth + (float)n * g_settingsBtnWidth / 2.0f, y,
+			g_settingsBtnWidth / 2.0f, g_settingsBtnHeight);
+	}
+
+	y += g_settingsBtnHeight + 2.0f + vspace;
+
+	g_btnPostFaderMeter->setBounds(x + g_settingsLabelWidth, y, g_settingsBtnWidth, g_settingsBtnHeight);
+	y += g_settingsBtnHeight + 2.0f + vspace;
+
+	g_btnShowOfflineDevices->setBounds(x + g_settingsLabelWidth, y, g_settingsBtnWidth, g_settingsBtnHeight);
+	y += g_settingsBtnHeight + 2.0f + vspace;
+
+	g_btnReconnect->setBounds(x + g_settingsLabelWidth, y, g_settingsBtnWidth, g_settingsBtnHeight);
+	y += g_settingsBtnHeight + 2.0f + vspace;
+
+	g_btnServerlistScan->setBounds(x + g_settingsLabelWidth, y, g_settingsBtnWidth, g_settingsBtnHeight);
 
 	for (vector<Button*>::iterator it = g_btnsServers.begin(); it != g_btnsServers.end(); ++it) {
-		(*it)->rc.w = round(g_btn_width);
-		(*it)->rc.h = round(g_btn_height / 2.0f);
+		(*it)->setBounds(x + g_settingsLabelWidth + (g_settingsBtnWidth + 2.0f), y, g_settingsBtnWidth, g_settingsBtnHeight);
+		y += g_settingsBtnHeight + 2.0f;
 	}
+
+	g_settingsDlgWidth = g_btnInfo->getX() + g_settingsBtnWidth + 20.0f - g_channel_offset_x;
+	g_settingsDlgHeight = g_btnServerlistScan->getY() + g_settingsBtnHeight + 20.0f;
+	if (g_btnsServers.size() > 1) {
+		g_settingsDlgHeight = g_btnsServers.back()->getY() + g_settingsBtnHeight + 20.0f;
+	}
+
+	browseToSelectedChannel(g_browseToChannel);
+	updateMaxPages(!g_btnSelectChannels->isHighlighted());
+
+	setRedrawWindow(true);
 }
 
-Button::Button(int _id, std::string _text, int _x, int _y, int _w, int _h,
-					bool _checked, bool _enabled, bool _visible)
-{
-	this->id=_id;
-	this->text=_text;
-	this->rc.x=_x;
-	this->rc.y=_y;
-	this->rc.w=_w;
-	this->rc.h=_h;
-	this->checked=_checked;
-	this->enabled=_enabled;
-	this->visible=_visible;
+Button::Button(int type, int id, const string &text, float x, float y, float w, float h, bool checked, 
+	bool enabled, bool visible, void (*onStateChanged)(Button*)) {
+	this->type = type;
+	this->id = id;
+	this->text = text;
+	this->x = x;
+	this->y = y;
+	this->w = w;
+	this->h = h;
+	this->state = checked ? CHECKED : NONE;
+	this->enabled = enabled;
+	this->visible = visible;
+	this->onStateChanged = onStateChanged;
 }
 
-bool Button::IsClicked(SDL_Point *pt)
-{
-	if(this->visible && this->enabled)
-	{
-		return (bool)SDL_PointInRect(pt, &this->rc);
+bool Button::onPress(SDL_Point *pt) {
+	if(this->visible && this->enabled) {
+		SDL_Rect rc = { (int)this->x, (int)this->y, (int)this->w, (int)this->h};
+		if ((bool)SDL_PointInRect(pt, &rc)) {
+			int oldState = this->state;
+			this->state &= 0x10;
+			this->state |= PRESSED;
+			if (oldState != this->state) {
+				if(onStateChanged)
+					onStateChanged(this);
+				setRedrawWindow(true);
+			}
+			return true;
+		}
 	}
 	return false;
 }
 
-void Button::DrawButton(int color)
+
+bool Button::onRelease() {
+	if (this->state & PRESSED) {
+		int oldState = this->state;
+		if (this->type == BUTTON) {
+			this->state = RELEASED;
+		}
+		else {
+			this->state &= 0x10;
+			if (this->type == CHECK) {
+				this->state ^= 0x10;
+			}
+			else {
+				this->state |= 0x10;
+			}
+			this->state |= RELEASED;
+		}
+
+		if (oldState != this->state) {
+			if (onStateChanged)
+				onStateChanged(this);
+			setRedrawWindow(true);
+		}
+
+		return true;
+	}
+	return false;
+}
+
+void Button::setBounds(float x, float y, float w, float h) {
+	this->x = x;
+	this->y = y;
+	this->setSize(w, h);
+}
+
+void Button::setSize(float w, float h) {
+	this->w = w;
+	this->h = h;
+	setRedrawWindow(true);
+}
+
+float Button::getX() {
+	return this->x;
+}
+float Button::getY() {
+	return this->y;
+}
+float Button::getWidth() {
+	return this->w;
+}
+float Button::getHeight() {
+	return this->h;
+}
+
+bool Button::isHighlighted() {
+	return this->state & CHECKED || this->state & PRESSED;
+}
+
+void Button::setCheck(bool check) {
+	int oldState = this->state;
+	if (check) {
+		this->state = CHECKED;
+	}
+	else {
+		this->state = NONE;
+	}
+	if (oldState != this->state) {
+		if (onStateChanged)
+			onStateChanged(this);
+		setRedrawWindow(true);
+	}
+}
+
+bool Button::isChecked() {
+	return this->state & CHECKED;
+}
+
+
+int Button::getState() {
+	return this->state;
+}
+
+void Button::setVisible(bool visible) {
+	this->visible = visible;
+	setRedrawWindow(true);
+}
+
+bool Button::isVisible() {
+	return this->visible;
+}
+
+void Button::setEnable(bool enabled) {
+	this->enabled = enabled;
+	setRedrawWindow(true);
+}
+
+bool Button::isEnabled() {
+	return this->enabled;
+}
+
+void Button::setText(const string &text) {
+	this->text = text;
+	setRedrawWindow(true);
+}
+
+string Button::getText() {
+	return this->text;
+}
+
+int Button::getId() { return this->id; }
+
+void Button::draw(int color, const string &overrideName)
 {
 	if (!this->visible)
 		return;
 
 	int btn_switch = 0;
-	if (this->checked)
+	if (this->isHighlighted()) // pressed or checked
 	{
 		btn_switch = 1;
 	}
 
 //	DrawColor(x, y, width, height, bgClr);
-	Vector2D stretch = Vector2D(this->rc.w, this->rc.h);
+	Vector2D stretch = Vector2D(this->w, this->h);
 
 	GFXSurface* gs = g_gsButtonYellow[btn_switch];
 	if (color == BTN_COLOR_RED) {
@@ -489,55 +805,59 @@ void Button::DrawButton(int color)
 	}
 
 	COLORREF clr = RGB(0, 0, 0);
-	if (!this->enabled) {
+	if (!this->enabled && !(this->state & PRESSED)) {
 		gfx->SetFilter_Saturation(gs, -0.1f);
 		gfx->SetFilter_Brightness(gs, 0.9f);
 		gfx->SetFilter_Contrast(gs, 0.7f);
 		clr = RGB(70, 70, 70);
 	}
-	gfx->Draw(gs, this->rc.x, this->rc.y, NULL, GFX_NONE, 1.0f, 0, NULL, &stretch);
+	gfx->Draw(gs, this->x, this->y, NULL, GFX_NONE, 1.0f, 0, NULL, &stretch);
 
 	gfx->SetFilter_Saturation(gs, 0.0f);
 	gfx->SetFilter_Brightness(gs, 1.0f);
 	gfx->SetFilter_Contrast(gs, 1.0f);
 
-	float max_width = (float)this->rc.w * 0.9;
-	Vector2D sz = gfx->GetTextBlockSize(g_fntMain, this->text, GFX_CENTER | GFX_AUTOBREAK, max_width);
-	Vector2D szText(max_width, this->rc.h);
+	string text = overrideName.empty() ? this->text : overrideName;
+
+	float max_width = this->w * 0.9f;
+	Vector2D sz = gfx->GetTextBlockSize(g_fntMain, text, GFX_CENTER);
+	Vector2D szText(max_width, this->h);
 	gfx->SetColor(g_fntMain, clr);
-	gfx->Write(g_fntMain, this->rc.x + ((float)this->rc.w - max_width) / 2.0f, this->rc.y + this->rc.h / 2.0f - sz.getY() / 2.0f, this->text, GFX_CENTER | GFX_AUTOBREAK, &szText, 0, 0.8);
+	gfx->Write(g_fntMain, this->x + (this->w - max_width) / 2.0f, this->y + this->h / 2.0f - sz.getY() / 2.0f, shortenString(text, g_fntMain, max_width), GFX_CENTER, &szText, 0, 0.8f);
 }
 
 Touchpoint::Touchpoint() {
 	memset(this, 0, sizeof(Touchpoint));
 }
 
-ChannelIndex::ChannelIndex(int _deviceIndex, int _inputIndex) {
-	this->deviceIndex = _deviceIndex;
-	this->inputIndex = _inputIndex;
-}
-bool ChannelIndex::IsValid() {
-	return (this->deviceIndex != -1 && this->inputIndex != -1);
-}
-
-Send::Send()
-{
-	this->Clear();
-}
-void Send::Clear()
-{
-	this->ua_id = "";
-	// this->name = "";
-	this->gain = fromDbFS(-144.0);
-	this->pan = 0;
-	this->bypass = false;
-	this->channel = NULL;
-	this->meter_level = -144.0;
-	this->meter_level2 = -144.0;
-	this->subscribed = false;
+Module::Module(const string &id) {
+	this->id = id;
+	this->level = NAN;
+	this->mute = false;
+	this->pan = 0.0;
+	this->pan2 = 0.0;
+	this->meter_level = fromDbFS(-144.0);
+	this->meter_level2 = fromDbFS(-144.0);
+	this->clip = false;
+	this->clip2 = false;
+	this->subscriptions = 0;
 }
 
-void Send::ChangePan(double pan_change, bool absolute)
+Module::~Module() {
+}
+
+Send::Send(Channel* channel, const string &id) : Module(id) {
+	this->channel = channel;
+}
+Send::~Send() {
+	this->updateSubscription(false, ALL);
+}
+
+void Send::init() {
+	this->updateSubscription(true, MUTE);
+}
+
+void Send::changePan(double pan_change, bool absolute)
 {
 	if (this->channel->stereo)
 		return;
@@ -559,205 +879,245 @@ void Send::ChangePan(double pan_change, bool absolute)
 	{
 		this->pan = _pan;
 
-		string msg = "set /devices/" + this->channel->device->ua_id + "/inputs/" + this->channel->ua_id + "/sends/" + this->ua_id + "/Pan/value/ " + to_string(this->pan);
-		UA_TCPClientSend(msg.c_str());
+		string type_str = this->channel->type == INPUT ? "/inputs/" : "/auxs/";
+
+		string msg = "set /devices/" + this->channel->device->id + type_str + this->channel->id + "/sends/" + this->id + "/Pan/value/ " + to_string(this->pan);
+		tcpClientSend(msg);
 	}
 }
 
-void Send::ChangeGain(double gain_change, bool absolute)
+void Send::changeLevel(double level_change, bool absolute)
 {
-	double _gain = fromMeterScale(toMeterScale(this->gain) + gain_change);
-	if (absolute)
-		_gain = gain_change;
-
-	if (_gain > 4.0)
-	{
-		_gain = 4.0;
+	double _level = 0.0;
+	if (absolute) {
+		_level = level_change;
 	}
-	else if (_gain < fromDbFS(-144.0))
-	{
-		_gain = fromDbFS(-144.0);
+	else {
+		_level = fromMeterScale(toMeterScale(this->level) + level_change);
 	}
 
-	if (this->gain != _gain)
-	{
-		this->gain = _gain;
+	_level = min(_level, 4.0);
+	_level = max(_level, fromDbFS(-144.0));
 
-		string msg = "set /devices/" + this->channel->device->ua_id + "/inputs/" + this->channel->ua_id + "/sends/" + this->ua_id + "/Gain/value/ " + to_string(toDbFS(this->gain));
-		UA_TCPClientSend(msg.c_str());
+	if (this->level != _level) {
+		this->level = _level;
+
+		string type_str = this->channel->type == INPUT ? "/inputs/" : "/auxs/";
+		string msg = "set /devices/" + this->channel->device->id + type_str + this->channel->id + "/sends/" + this->id + "/Gain/value/ " + to_string(toDbFS(this->level));
+		tcpClientSend(msg);
 	}
 }
 
-void Send::PressBypass(int state)
+void Send::pressMute(int state)
 {
 	if (state == SWITCH)
-		this->bypass = !this->bypass;
+		this->mute = !this->mute;
 	else
-		this->bypass = (bool)state;
+		this->mute = (bool)state;
 
 	string value = "true";
-	if (!this->bypass)
+	if (!this->mute)
 		value = "false";
 
-	string msg = "set /devices/" + this->channel->device->ua_id + "/inputs/" + this->channel->ua_id + "/sends/" + this->ua_id + "/Bypass/value/ " + value;
-	UA_TCPClientSend(msg.c_str());
+	string type_str = this->channel->type == INPUT ? "/inputs/" : "/auxs/";
+	string msg = "set /devices/" + this->channel->device->id + type_str + this->channel->id + "/sends/" + this->id + "/Bypass/value/ " + value;
+	tcpClientSend(msg);
 }
 
-Channel::Channel()
-{
-	this->label_gfx = rand() % 4;
-	this->label_rotation = (float)(rand() % 100) / 2000 - 0.025;
 
-	this->Clear();
-}
-Channel::~Channel()
+void Send::updateSubscription(bool subscribe, int flags)
 {
-	this->sendCount = 0;
-	if (this->sends)
-	{
-		delete[] this->sends;
-		this->sends = NULL;
+	string type_str = this->channel->type == INPUT ? "/inputs/" : "/auxs/";
+	string root = "";
+	if (!subscribe) {
+		root += "un";
 	}
-}
-void Channel::Clear()
-{
-	this->ua_id = "";
-	this->name = "";
-	this->level = fromDbFS(-144.0);
-	this->pan = 0;
-	this->solo = false;
-	this->mute = false;
-	memset(&this->touch_point,0,sizeof(Touchpoint));
-	this->device = NULL;
-	this->sends = NULL;
-	this->sendCount = 0;
-	this->stereo = false;
-	this->stereoname = "";
-	this->pan2 = 0;
-	this->hidden = true;
-	this->enabledByUser = false;
-	this->active = false;
-	this->selected_to_show = true;
+	root += "subscribe /devices/" + this->channel->device->id;
+	
+	if (this->channel->type == INPUT) {
+		root += "/inputs/" + this->channel->id + "/sends/" + this->id;
+	}
+	else if (this->channel->type == AUX) {
+		root += "/auxs/" + this->channel->id + "/sends/" + this->id;
+	}
 
-	this->fader_group = 0;
+	if ((flags & LEVEL) && ((bool)(this->subscriptions & LEVEL) != subscribe)) {
+		string cmd = root + "/Gain/";
+		tcpClientSend(cmd);
+		this->subscriptions ^= LEVEL;
+	}
 
-	this->meter_level = -144.0;
-	this->meter_level2 = -144.0;
-
-	this->subscribed = false;
-}
-void Channel::AllocSends(int _sendCount)
-{
-	this->sendCount = _sendCount;
-	this->sends = new Send[_sendCount];
-}
-void Channel::LoadSends(int sendIndex, string us_sendId)
-{
-	this->sends[sendIndex].ua_id = us_sendId;
-	this->sends[sendIndex].channel = this;
-}
-void Channel::SubscribeSend(bool subscribe, int n)
-{
-	if(n >= 0 && n < this->sendCount && this->sends[n].ua_id.length()) {
-
-		if (this->sends[n].subscribed != subscribe) {
-
-			this->sends[n].subscribed = subscribe;
-
-			string root = "";
-			if (!subscribe) {
-				root += "un";
-			}
-			root += "subscribe /devices/" + this->device->ua_id + "/inputs/" + this->ua_id + "/sends/" + this->sends[n].ua_id;
-
-			string cmd = root + "/Gain/";
-			UA_TCPClientSend(cmd.c_str());
-
-			cmd = root + "/Bypass/";
-			UA_TCPClientSend(cmd.c_str());
-
-			cmd = root + "/Pan/";
-			UA_TCPClientSend(cmd.c_str());
-
-			cmd = root + "/meters/0/MeterLevel/";
-			UA_TCPClientSend(cmd.c_str());
-
-			cmd = root + "/meters/1/MeterLevel/";
-			UA_TCPClientSend(cmd.c_str());
-
-			//	cmd = root + "/Pan2/";
-			//	UA_TCPClientSend(cmd.c_str());
-
-			//	cmd = "get /devices/" + this->device->ua_id + "/inputs/" + this->ua_id + "/sends/" + to_string(n);
-			//	UA_TCPClientSend(cmd.c_str());
+	if ((flags & PAN) && ((bool)(this->subscriptions & PAN) != subscribe)) {
+		if (this->channel->type == INPUT) {
+			string cmd = root + "/Pan/";
+			tcpClientSend(cmd);
+			this->subscriptions ^= PAN;
 		}
 	}
+
+	if ((flags & METER) && ((bool)(this->subscriptions & METER) != subscribe)) {
+		string cmd = root + "/meters/0/MeterLevel/";
+		tcpClientSend(cmd);
+
+		cmd = root + "/meters/0/MeterClip/";
+		tcpClientSend(cmd);
+
+		cmd = root + "/meters/1/MeterLevel/";
+		tcpClientSend(cmd);
+
+		cmd = root + "/meters/1/MeterClip/";
+		tcpClientSend(cmd);
+
+		this->subscriptions ^= METER;
+	}
+
+	if ((flags & MUTE) && ((bool)(this->subscriptions & MUTE) != subscribe)) {
+		string cmd = root + "/Bypass/";
+		tcpClientSend(cmd);
+		this->subscriptions ^= MUTE;
+	}
 }
 
-bool Channel::IsTouchOnFader(Vector2D *pos)
+Channel::Channel(UADevice* device, const string &id, int type) : Module(id) {
+	this->label_gfx = rand() % 4;
+	this->label_rotation = (float)(rand() % 100) / 2000.0f - 0.025f;
+	this->device = device;
+	this->type = type;
+	this->solo = false;
+	this->post_fader = false;
+	if (this->type == AUX || this->type == MASTER) {
+		this->hidden = false;
+		this->enabledByUser = true;
+		this->active = false;
+		this->stereo = true;
+	}
+	else {
+		this->hidden = true;
+		this->enabledByUser = false;
+		this->active = false;
+		this->stereo = false;
+	}
+	this->selected_to_show = true;
+	this->fader_group = 0;
+}
+Channel::~Channel() {
+	this->updateSubscription(false, ALL | ALL_MIXES);
+
+	for (unordered_map<string, Send*>::iterator it = this->sendsByName.begin(); it != this->sendsByName.end(); ++it) {
+		SAFE_DELETE(it->second);
+	}
+	this->sendsById.clear();
+	this->sendsByName.clear();
+}
+
+void Channel::init() {
+	this->updateSubscription(true, STEREO | NAME | MUTE | STATE | ALL_MIXES);
+
+	if (this->type != MASTER) {
+		string type_str = this->type == INPUT ? "/inputs/" : "/auxs/";
+		string cmd = "get /devices/" + this->device->id + type_str + this->id + "/sends";
+		tcpClientSend(cmd);
+	}
+}
+
+bool Channel::isVisible(bool only_selected) {
+
+	if ((only_selected && !this->selected_to_show) || (!this->device->online && !g_btnShowOfflineDevices->isHighlighted())) {
+		return false;
+	}
+
+	for (vector<pair<string, Button*>>::iterator it = g_btnSends.begin(); it != g_btnSends.end(); ++it) {
+		if (it->second->isHighlighted()) {
+			Send* send = this->getSendByName(it->second->getText());
+			if (!send) {
+				return false;
+			}
+		}
+	}
+
+	return (!this->hidden && (!this->stereo || (stoi(this->id, NULL, 10) % 2) == 0 || this->type == AUX || this->type == MASTER)
+		&& this->enabledByUser && this->active);
+}
+
+bool Channel::isTouchOnFader(Vector2D *pos)
 {
-	int y = (g_fader_label_height + g_channel_pan_height + g_channel_btn_size);
-	int height = g_channel_height - y - g_channel_btn_size;
+	float y = (g_fader_label_height + g_channel_pan_height + g_channel_btn_size);
+	float height = g_channel_height - y - g_channel_btn_size;
 	return (pos->getX() > 0 && pos->getX() < g_channel_width
 		&& pos->getY() >y && pos->getY() < y + height);
 }
 
-bool Channel::IsTouchOnPan(Vector2D *pos)
+bool Channel::isTouchOnPan(Vector2D *pos)
 {
-	int width = g_channel_width;
+	float width = g_channel_width;
 
 	if (this->stereo)
-		width /= 2;
+		width /= 2.0f;
 
 	return (pos->getX() > 0 && pos->getX() < width
 		&& pos->getY() > g_fader_label_height && pos->getY() < (g_fader_label_height + g_channel_pan_height));
 }
 
-bool Channel::IsTouchOnPan2(Vector2D *pos)
+bool Channel::isTouchOnPan2(Vector2D *pos)
 {
-	int width = g_channel_width / 2;
+	float width = g_channel_width / 2.0f;
 
 	return (pos->getX() > width && pos->getX() < g_channel_width
 		&& pos->getY() > g_fader_label_height && pos->getY() < (g_fader_label_height + g_channel_pan_height));
 }
 
-bool Channel::IsTouchOnGroup1(Vector2D *pos)
+bool Channel::isTouchOnGroup1(Vector2D *pos)
 {
-	int x = (g_channel_width / 2 - g_channel_btn_size) / 2;
-	int y = g_channel_height - g_channel_btn_size;
+	float x = (g_channel_width / 2.0f - g_channel_btn_size) / 2.0f;
+	float y = g_channel_height - g_channel_btn_size;
 
 	return (pos->getX() > x && pos->getX() < x + g_channel_btn_size
 		&& pos->getY() > y && pos->getY() < y + g_channel_btn_size);
 }
 
-bool Channel::IsTouchOnGroup2(Vector2D *pos)
+bool Channel::isTouchOnGroup2(Vector2D *pos)
 {
-	int x = g_channel_width / 2 + (g_channel_width / 2 - g_channel_btn_size) / 2;
-	int y = g_channel_height - g_channel_btn_size;
+	float x = g_channel_width / 2.0f + (g_channel_width / 2.0f - g_channel_btn_size) / 2.0f;
+	float y = g_channel_height - g_channel_btn_size;
 
 	return (pos->getX() > x && pos->getX() < x + g_channel_btn_size
 		&& pos->getY() > y && pos->getY() < y + g_channel_btn_size);
 }
 
-bool Channel::IsTouchOnMute(Vector2D *pos)
+bool Channel::isTouchOnMute(Vector2D *pos)
 {
-	int x = g_channel_width / 2 + (g_channel_width / 2 - g_channel_btn_size) / 2;
-	int y = g_fader_label_height + g_channel_pan_height;
+	float x = g_channel_width / 2.0f + (g_channel_width / 2.0f - g_channel_btn_size) / 2.0f;
+	float y = g_fader_label_height + g_channel_pan_height;
 
 	return (pos->getX() > x && pos->getX() < x + g_channel_btn_size
 		&& pos->getY() > y && pos->getY() < y + g_channel_btn_size);
 }
 
-bool Channel::IsTouchOnSolo(Vector2D *pos)
+bool Channel::isTouchOnSolo(Vector2D *pos)
 {
-	int x = (g_channel_width / 2 - g_channel_btn_size) / 2;
-	int y = g_fader_label_height + g_channel_pan_height;
+	if (this->type != INPUT)
+		return false;
+
+	float x = (g_channel_width / 2.0f - g_channel_btn_size) / 2.0f;
+	float y = g_fader_label_height + g_channel_pan_height;
 
 	return (pos->getX() > x && pos->getX() < x + g_channel_btn_size
 		&& pos->getY() > y && pos->getY() < y + g_channel_btn_size);
 }
 
-void Channel::ChangePan(double pan_change, bool absolute)
+bool Channel::isTouchOnPostFader(Vector2D* pos)
+{
+	if (this->type != AUX)
+		return false;
+
+	float x = (g_channel_width / 2.0f - g_channel_btn_size) / 2.0f;
+	float y = g_fader_label_height + g_channel_pan_height;
+
+	return (pos->getX() > x && pos->getX() < x + g_channel_btn_size
+		&& pos->getY() > y && pos->getY() < y + g_channel_btn_size);
+}
+
+void Channel::changePan(double pan_change, bool absolute)
 {
 	double _pan = this->pan + pan_change;
 	if (absolute)
@@ -775,12 +1135,13 @@ void Channel::ChangePan(double pan_change, bool absolute)
 	if (this->pan != _pan)
 	{
 		this->pan = _pan;
-		string msg = "set /devices/" + this->device->ua_id + "/inputs/" + this->ua_id + "/Pan/value/ " + to_string(this->pan);
-		UA_TCPClientSend(msg.c_str());
+		string type_str = this->type == INPUT ? "/inputs/" : "/auxs/";
+		string msg = "set /devices/" + this->device->id + type_str + this->id + "/Pan/value/ " + to_string(this->pan);
+		tcpClientSend(msg);
 	}
 }
 
-void Channel::ChangePan2(double pan_change, bool absolute)
+void Channel::changePan2(double pan_change, bool absolute)
 {
 	double _pan = this->pan2 + pan_change;
 	if (absolute)
@@ -795,41 +1156,51 @@ void Channel::ChangePan2(double pan_change, bool absolute)
 		_pan = -1.0;
 	}
 
-	char msg[256];
 	if (this->pan2 != _pan)
 	{
 		this->pan2 = _pan;
-		string msg = "set /devices/" + this->device->ua_id + "/inputs/" + this->ua_id + "/Pan2/value/ " + to_string(this->pan2);
-		UA_TCPClientSend(msg.c_str());
+		string type_str = this->type == INPUT ? "/inputs/" : "/auxs/";
+		string msg = "set /devices/" + this->device->id + type_str + this->id + "/Pan2/value/ " + to_string(this->pan2);
+		tcpClientSend(msg);
 	}
 }
 
-void Channel::ChangeLevel(double level_change, bool absolute)
+void Channel::changeLevel(double level_change, bool absolute)
 {
-	double _level = fromMeterScale(toMeterScale(this->level) + level_change);
+	double _level = 0;
 
-	if (absolute)
+	if (absolute) {
 		_level = level_change;
-
-	if (_level > 4.0)
-	{
-		_level = 4.0;
 	}
-	else if (_level < fromDbFS(-144.0))
-	{
-		_level = fromDbFS(-144.0);
+	else {
+		_level = fromMeterScale(toMeterScale(this->level) + level_change);
 	}
+	
+	if (this->type == MASTER) {
+		_level = min(_level, 1.0);
+	}
+	else {
+		_level = min(_level, 4.0);
+	}
+	_level = max(_level, fromDbFS(-144.0));
 
 	if (this->level != _level)
 	{
 		this->level = _level;
 
-		string msg = "set /devices/" + this->device->ua_id + "/inputs/" + this->ua_id + "/FaderLevel/value/ " + to_string(toDbFS(_level));
-		UA_TCPClientSend(msg.c_str());
+		if (this->type == MASTER) {
+			string msg = "set /devices/" + this->device->id + "/outputs/" + this->id + "/CRMonitorLevel/value/ " + to_string(toDbFS(_level));
+			tcpClientSend(msg);
+		}
+		else {
+			string type_str = this->type == INPUT ? "/inputs/" : "/auxs/";
+			string msg = "set /devices/" + this->device->id + type_str + this->id + "/FaderLevel/value/ " + to_string(toDbFS(_level));
+			tcpClientSend(msg);
+		}
 	}
 }
 
-void Channel::PressMute(int state)
+void Channel::pressMute(int state)
 {
 	if (state == SWITCH)
 		this->mute = !this->mute;
@@ -841,11 +1212,18 @@ void Channel::PressMute(int state)
 	if (!this->mute)
 		value = "false";
 
-	string msg = "set /devices/" + this->device->ua_id + "/inputs/" + this->ua_id + "/Mute/value/ " + value;
-	UA_TCPClientSend(msg.c_str());
+	if (this->type == MASTER) {
+		string msg = "set /devices/" + this->device->id + "/outputs/" + this->id + "/Mute/value/ " + value;
+		tcpClientSend(msg);
+	}
+	else {
+		string type_str = this->type == INPUT ? "/inputs/" : "/auxs/";
+		string msg = "set /devices/" + this->device->id + type_str + this->id + "/Mute/value/ " + value;
+		tcpClientSend(msg);
+	}
 }
 
-void Channel::PressSolo(int state)
+void Channel::pressSolo(int state)
 {
 	if (state == SWITCH)
 		this->solo = !this->solo;
@@ -856,442 +1234,403 @@ void Channel::PressSolo(int state)
 	if (!this->solo)
 		value = "false";
 
-	string msg = "set /devices/" + this->device->ua_id + "/inputs/" + this->ua_id + "/Solo/value/ " + value;
-	UA_TCPClientSend(msg.c_str());
+	string msg = "set /devices/" + this->device->id + "/inputs/" + this->id + "/Solo/value/ " + value;
+	tcpClientSend(msg);
 }
 
-bool Channel::IsOverriddenShow(bool ignoreStereoname) {
-	string name = this->name;
-	if (!ignoreStereoname && this->stereo)
-		name = this->stereoname;
-
-	return (name.length() > 0 && name.substr(0, 1) == "!");
-}
-
-bool Channel::IsOverriddenHide(bool ignoreStereoname) {
-	string name = this->name;
-	if (!ignoreStereoname && this->stereo)
-		name = this->stereoname;
-
-	return (name.length() > 0 && name.substr(0, 1) == "#");
-}
-
-UADevice::UADevice()
+void Channel::pressPostFader(int state)
 {
-	this->ua_id = "";
-	this->inputsCount = 0;
-	this->inputs = NULL;
-	this->auxsCount = 0;
-	this->auxs = NULL;
+	if (state == SWITCH)
+		this->post_fader = !this->post_fader;
+	else
+		this->post_fader = (bool)state;
+
+	string value = "true";
+	if (!this->post_fader)
+		value = "false";
+
+	string msg = "set /devices/" + this->device->id + "/auxs/" + this->id + "/SendPostFader/value/ " + value;
+	tcpClientSend(msg);
+}
+
+void Channel::updateProperties() {
+	string name = this->name;
+	if (this->stereo && this->type == INPUT) {
+		name = this->stereoname;
+	}
+
+	string newProperties;
+	size_t pos = name.find_last_of("?");
+	if (pos != string::npos) {
+		newProperties = name.substr(pos + 1);
+	}
+	else {
+		newProperties = "";
+	}
+	if (newProperties != this->properties) {
+		this->properties = newProperties;
+		if (this->isOverriddenShow()) {
+			this->selected_to_show = true;
+		}
+		else if (this->isOverriddenHide()) {
+			this->selected_to_show = false;
+		}
+		pushEvent(EVENT_AFTER_UPDATE_PROPERTIES);
+	}
+}
+
+string Channel::getName() {
+	string name = this->name;
+	if (this->stereo && this->type == INPUT) {
+		name = this->stereoname;
+	}
+
+	size_t pos = name.find_last_of("?");
+	if (pos != string::npos) {
+		name = name.substr(0, pos);
+	}
+	return name;
+}
+
+void Channel::setName(const string &name) {
+	this->name = name;
+	this->updateProperties();
+	setRedrawWindow(true);
+}
+
+void Channel::setStereoname(const string &stereoname) {
+	this->stereoname = stereoname;
+	this->updateProperties();
+	setRedrawWindow(true);
+}
+
+void Channel::setStereo(bool stereo) {
+	this->stereo = stereo;
+	this->updateProperties();
+	setRedrawWindow(true);
+}
+
+void Channel::getColoredGfx(GFXSurface **gsLabel, GFXSurface** gsFader) {
+	if (!gsLabel || !gsFader) {
+		return;
+	}
+
+	if (this->type == AUX) {
+		*gsLabel = g_gsLabelBlue[this->label_gfx];
+		*gsFader = g_gsFaderBlue;
+	}
+	else if (this->type == MASTER) {
+		*gsLabel = g_gsLabelRed[this->label_gfx];
+		*gsFader = g_gsFaderRed;
+	}
+	else {
+		if (properties.find("r") != string::npos || properties.find("R") != string::npos) {
+			*gsLabel = g_gsLabelRed[this->label_gfx];
+			*gsFader = g_gsFaderRed;
+		}
+		else if (properties.find("g") != string::npos || properties.find("G") != string::npos) {
+			*gsLabel = g_gsLabelGreen[this->label_gfx];
+			*gsFader = g_gsFaderGreen;
+		}
+		else if (properties.find("bl") != string::npos || properties.find("BL") != string::npos) {
+			*gsLabel = g_gsLabelBlack[this->label_gfx];
+			*gsFader = g_gsFaderBlack;
+		}
+		else if (properties.find("b") != string::npos || properties.find("B") != string::npos) {
+			*gsLabel = g_gsLabelBlue[this->label_gfx];
+			*gsFader = g_gsFaderBlue;
+		}
+		else if (properties.find("y") != string::npos || properties.find("Y") != string::npos) {
+			*gsLabel = g_gsLabelYellow[this->label_gfx];
+			*gsFader = g_gsFaderYellow;
+		}
+		else if (properties.find("p") != string::npos || properties.find("P") != string::npos) {
+			*gsLabel = g_gsLabelPurple[this->label_gfx];
+			*gsFader = g_gsFaderPurple;
+		}
+		else if (properties.find("o") != string::npos || properties.find("O") != string::npos) {
+			*gsLabel = g_gsLabelOrange[this->label_gfx];
+			*gsFader = g_gsFaderOrange;
+		}
+		else {
+			*gsLabel = g_gsLabelWhite[this->label_gfx];
+			*gsFader = g_gsFaderWhite;
+		}
+	}
+}
+
+bool Channel::isOverriddenShow() {
+	return (properties.length() > 0 && (properties.find("s") != string::npos || properties.find("S") != string::npos));
+}
+
+bool Channel::isOverriddenHide() {
+	return (properties.length() > 0 && (properties.find("h") != string::npos || properties.find("H") != string::npos));
+}
+
+void Channel::updateSubscription(bool subscribe, int flags)
+{
+	bool subscribeMix = subscribe && (g_btnMix->isHighlighted() || (flags & ALL_MIXES));
+
+	string type_str;
+	if (this->type == INPUT) {
+		type_str = "/inputs/";
+	}
+	else if (this->type == AUX) {
+		type_str = "/auxs/";
+	}
+	else if (this->type == MASTER) {
+		type_str = "/outputs/";
+	}
+
+	string root = "";
+	if (!subscribeMix) {
+		root += "un";
+	}
+	root += "subscribe /devices/" + this->device->id + type_str + this->id;
+
+	if ((flags & NAME) && ((bool)(this->subscriptions & NAME) != subscribeMix)) {
+		tcpClientSend(root + "/Name/");
+
+		if (this->type == INPUT) {
+			tcpClientSend(root + "/StereoName/");
+			this->subscriptions ^= NAME;
+		}
+	}
+
+	if ((flags & STEREO) && ((bool)(this->subscriptions & STEREO) != subscribeMix)) {
+		if (this->type == INPUT) {
+			tcpClientSend(root + "/Stereo/");
+			this->subscriptions ^= STEREO;
+		}
+	}
+
+	if ((flags & MUTE) && ((bool)(this->subscriptions & MUTE) != subscribeMix)) {
+		tcpClientSend(root + "/Mute/");
+		this->subscriptions ^= MUTE;
+	}
+
+	if ((flags & STATE) && ((bool)(this->subscriptions & STATE) != subscribeMix)) {
+		if (this->type == INPUT) {
+			tcpClientSend(root + "/ChannelHidden/");
+			tcpClientSend(root + "/EnabledByUser/");
+			tcpClientSend(root + "/Active/");
+			this->subscriptions ^= STATE;
+		}
+	}
+
+	if ((flags & LEVEL) && ((bool)(this->subscriptions & LEVEL) != subscribeMix)) {
+		if (this->type == MASTER) {
+			tcpClientSend(root + "/CRMonitorLevel/");
+		}
+		else {
+			tcpClientSend(root + "/FaderLevel/");
+		}
+		this->subscriptions ^= LEVEL;
+	}
+
+	if ((flags & SOLO) && ((bool)(this->subscriptions & SOLO) != subscribeMix)) {
+		if (this->type == INPUT) {
+			tcpClientSend(root + "/Solo/");
+			this->subscriptions ^= SOLO;
+		}
+	}
+
+	if ((flags & SEND_POST) && ((bool)(this->subscriptions & SEND_POST) != subscribeMix)) {
+		if (this->type == AUX) {
+			tcpClientSend(root + "/SendPostFader/");
+			this->subscriptions ^= SEND_POST;
+		}
+	}
+
+	if ((flags & PAN) && ((bool)(this->subscriptions & PAN) != subscribeMix)) {
+		if (this->type == INPUT) {
+			tcpClientSend(root + "/Pan/");
+			tcpClientSend(root + "/Pan2/");
+			this->subscriptions ^= PAN;
+		}
+	}
+
+	if ((flags & METER) && ((bool)(this->subscriptions & METER) != subscribeMix)) {
+		tcpClientSend(root + "/meters/0/MeterLevel/");
+		tcpClientSend(root + "/meters/0/MeterClip/");
+		tcpClientSend(root + "/meters/1/MeterLevel/");
+		tcpClientSend(root + "/meters/1/MeterClip/");
+		this->subscriptions ^= METER;
+	}
+
+	if (this->type != MASTER) {
+		for (vector<pair<string, Button*>>::iterator itB = g_btnSends.begin(); itB != g_btnSends.end(); ++itB) {
+			unordered_map<string, Send*>::iterator itS = this->sendsByName.find((*itB).first);
+			if (itS != this->sendsByName.end()) {
+				bool subscribeSend = subscribe && ((*itB).second->isHighlighted() || (flags & ALL_MIXES));
+				itS->second->updateSubscription(subscribeSend, flags);
+			}
+		}
+	}
+}
+
+UADevice::UADevice(const string &us_deviceId) {
 	this->online = false;
+	this->id = us_deviceId;
+	this->channelsTotal = 0;
+
+	string msg = "subscribe /devices/" + this->id + "/DeviceOnline/";
+	tcpClientSend(msg);
 }
-UADevice::~UADevice()
-{
-	this->Release();
-}
-void UADevice::LoadDevice(string us_deviceId)
-{
-	this->ua_id = us_deviceId;
-
-	//more device info
-	//	UA_TCPClientSend("get /devices/" + this->ua_id + "/");
-
-	string msg = "subscribe /devices/" + this->ua_id + "/DeviceOnline/";
-	UA_TCPClientSend(msg.c_str());
-
-//	msg = "subscribe /devices/" + this->ua_id;
-//	UA_TCPClientSend(msg.c_str());
-
-//	msg = "subscribe /MeterPulse/";
-//	UA_TCPClientSend(msg.c_str());
-}
-void UADevice::AllocChannels(int type, int _channelCount)
-{
-	int *channelsCount = NULL;
-	Channel **channels = NULL;
-
-	if (type == UA_AUX)
-	{
-		channelsCount = &this->auxsCount;
-		channels = &this->auxs;
-	}
-	else
-	{
-		channelsCount = &this->inputsCount;
-		channels = &this->inputs;
-	}
-
-	*channelsCount = _channelCount;
-	*channels = new Channel[_channelCount];
-}
-bool UADevice::IsChannelVisible(int type, int index, bool only_selected)
-{
-	int *channelsCount = NULL;
-	Channel *channels = NULL;
-
-	if (type == UA_AUX)
-	{
-		channelsCount = &this->auxsCount;
-		channels = this->auxs;
-	}
-	else
-	{
-		channelsCount = &this->inputsCount;
-		channels = this->inputs;
-	}
-
-	if (*channelsCount < 1 || !channels)
-		return false;
-
-	if (only_selected && !channels[index].selected_to_show)
-		return false;
-
-	bool b_stereo_hide = false;
-	
-	if ((index % 2) == 1)
-	{
-		b_stereo_hide = channels[index].stereo;
-	}
-
-	return (this->ua_id.length() && !channels[index].hidden && !b_stereo_hide
-		&& channels[index].enabledByUser && channels[index].active);
-}
-bool UADevice::LoadChannels(int type, int channelIndex, string us_inputId)
-{
-	int *channelsCount = NULL;
-	Channel *channels = NULL;
-
-	if (type == UA_AUX)
-	{
-		channelsCount = &this->auxsCount;
-		channels = this->auxs;
-	}
-	else
-	{
-		channelsCount = &this->inputsCount;
-		channels = this->inputs;
-	}
-
-	if (channelIndex > *channelsCount)
-		return false;
-
-	channels[channelIndex].ua_id = us_inputId;
-	channels[channelIndex].device = this;
-
-	string root = "subscribe /devices/" + this->ua_id + "/inputs/" + channels[channelIndex].ua_id;
-	//	string root = "subscribe /devices/" + this->ua_id + "/bus/" + this->channels[channelIndex].ua_id;
-
-	string cmd = root + "/ChannelHidden/";
-	UA_TCPClientSend(cmd.c_str());
-
-	cmd = root + "/EnabledByUser/";
-	UA_TCPClientSend(cmd.c_str());
-
-	cmd = root + "/Active/";
-	UA_TCPClientSend(cmd.c_str());
-
-	cmd = root + "/Stereo/";
-	UA_TCPClientSend(cmd.c_str());
-
-	cmd = root + "/Name/";
-	UA_TCPClientSend(cmd.c_str());
-
-	cmd = root + "/StereoName/";
-	UA_TCPClientSend(cmd.c_str());
-
-	root = "get /devices/" + this->ua_id + "/inputs/" + to_string(channelIndex);
-	cmd = root + "/sends";
-	UA_TCPClientSend(cmd.c_str());
-
-	return true;
+UADevice::~UADevice() {
 }
 
-void UADevice::SubscribeChannel(bool subscribe, int type, int n)
+int getActiveChannelsCount(bool onlyVisible)
 {
-	int *channelsCount = NULL;
-	Channel *channels = NULL;
-
-	if (type == UA_AUX)
-	{
-		channelsCount = &this->auxsCount;
-		channels = this->auxs;
-	}
-	else
-	{
-		channelsCount = &this->inputsCount;
-		channels = this->inputs;
-	}
-
-	if(n >= 0 && n < *channelsCount)
-	{
-		if (channels[n].ua_id.length())
-		{
-			bool subscribeMix = subscribe && g_btnMix->checked;
-
-			if (channels[n].subscribed != subscribeMix) {
-
-				channels[n].subscribed = subscribeMix;
-
-				string root = "";
-				if (!subscribeMix) {
-					root += "un";
-				}
-				root += "subscribe /devices/" + this->ua_id + "/inputs/" + channels[n].ua_id;
-				//	string root = "subscribe /devices/" + this->ua_id + "/bus/" + this->channels[n].ua_id;
-
-				string cmd = root + "/FaderLevel/";
-				UA_TCPClientSend(cmd.c_str());
-
-				cmd = root + "/Mute/";
-				UA_TCPClientSend(cmd.c_str());
-
-				cmd = root + "/Solo/";
-				UA_TCPClientSend(cmd.c_str());
-
-				cmd = root + "/Pan/";
-				UA_TCPClientSend(cmd.c_str());
-
-				cmd = root + "/Pan2/";
-				UA_TCPClientSend(cmd.c_str());
-
-				cmd = root + "/meters/0/MeterLevel/";
-				UA_TCPClientSend(cmd.c_str());
-
-				cmd = root + "/meters/1/MeterLevel/";
-				UA_TCPClientSend(cmd.c_str());
-			}
-			
-			for (int i = 0; i < g_btnSends.size(); i++) {
-				bool subscribeSend = subscribe && g_btnSends[i]->checked;
-				channels[n].SubscribeSend(subscribeSend, i);
-			}
-		}
-	}
-}
-
-int UADevice::GetActiveChannelsCount(int type, int flag)
-{
-	int *channelsCount = NULL;
-	Channel *channels = NULL;
-
-	if (type == UA_AUX)
-	{
-		channelsCount = &this->auxsCount;
-		channels = this->auxs;
-	}
-	else
-	{
-		channelsCount = &this->inputsCount;
-		channels = this->inputs;
-	}
-
-	if (*channelsCount < 1 || !channels)
+	if (g_channelsInOrder.empty()) {
 		return 0;
-
-	int visibleChannelsCount = 0;
-	int activeChannelsCount = 0;
-
-	bool btn_select = (g_btnSelectChannels->checked);
-
-	for (int n = 0; n < *channelsCount; n++)
-	{
-		if (!channels[n].enabledByUser || !channels[n].active)
-			continue;
-		if (this->IsChannelVisible(type, n, !btn_select))
-			visibleChannelsCount++;
-		activeChannelsCount++;
 	}
 
-	if(flag==UA_VISIBLE)
-		return visibleChannelsCount;
+	if ((g_activeChannelsCount == -1 && !onlyVisible) || (g_visibleChannelsCount == -1 && onlyVisible)) {
+		g_activeChannelsCount = 0;
+		g_visibleChannelsCount = 0;
 
-	return activeChannelsCount;
-}
+		bool btn_select = g_btnSelectChannels->isHighlighted();
 
-void UADevice::ClearChannels() {
-	if (this->inputs)
-	{
-		while (this->inputsCount > 0)
-		{
-			this->inputsCount--;
-			this->SubscribeChannel(false, UA_INPUT, this->inputsCount);
-			this->inputs[this->inputsCount].Clear();
+		for (unordered_map<string, Channel*>::iterator it = g_channelsById.begin(); it != g_channelsById.end(); ++it) {
+			if (!it->second->enabledByUser || !it->second->active || it->second->hidden)
+				continue;
+			if (it->second->isVisible(!btn_select))
+				g_visibleChannelsCount++;
+			g_activeChannelsCount++;
 		}
-		delete[] inputs;
-		inputs = NULL;
-	}
-	if (this->auxs)
-	{
-		while (this->auxsCount > 0)
-		{
-			this->auxsCount--;
-			this->auxs[this->auxsCount].Clear();
-		}
-		delete[] auxs;
-		auxs = NULL;
 	}
 
-	inputsCount = 0;
-	auxsCount = 0;
+	if (onlyVisible) {
+		return g_visibleChannelsCount;
+	}
+
+	return g_activeChannelsCount;
 }
 
-void UADevice::Release()
-{
-	this->ClearChannels();
-	ua_id = "";
+void clearChannels() {
+
+	for (unordered_map<string, Channel*>::iterator it = g_channelsById.begin(); it != g_channelsById.end(); ++it) {
+		it->second->updateSubscription(false, ALL|ALL_MIXES);
+		SAFE_DELETE(it->second);
+	}
+	g_channelsById.clear();
+	g_channelsInOrder.clear();
+	g_touchpointChannels.clear();
 }
 
-void UpdateSubscriptions() {
+void updateSubscriptions() {
 
-	int count = 0;
-	int channels_per_page = CalculateChannelsPerPage();
+	if (!isLoading()) {
+		int count = 0;
+		bool btn_select = g_btnSelectChannels->isHighlighted();
 
-	for (int i = 0; i < MAX_UA_DEVICES; i++) {
-		if (g_ua_devices[i].ua_id.length() && g_ua_devices[i].inputsCount && g_ua_devices[i].inputs) {
-			for (int n = 0; n < g_ua_devices[i].inputsCount; n++) {
-				bool subscribe = false;
-				if (g_ua_devices[i].IsChannelVisible(UA_INPUT, n, !g_btnSelectChannels->checked)) {
-					if (count >= g_page * channels_per_page && count < (g_page + 1) * channels_per_page) {
-						subscribe = true;
-					}
-					count++;
+		for (map<int, Channel*>::iterator it = g_channelsInOrder.begin(); it != g_channelsInOrder.end(); ++it) {
+			bool subscribe = false;
+			if (it->second->isVisible(!btn_select)) {
+				if (count >= g_page * g_channels_per_page && count < (g_page + 1) * g_channels_per_page) {
+					subscribe = true;
 				}
-				g_ua_devices[i].SubscribeChannel(subscribe, UA_INPUT, n);
+				count++;
+			}
+			it->second->updateSubscription(subscribe, LEVEL | METER | PAN | SOLO | SEND_POST | (subscribe ? 0 : ALL_MIXES));
+		}
+
+		// dragged channel on reorder pageflip
+		for (set<Channel*>::iterator it = g_touchpointChannels.begin(); it != g_touchpointChannels.end(); ++it) {
+			if (!(*it)->isVisible(!btn_select))
+				continue;
+
+			if ((*it)->touch_point.action == TOUCH_ACTION_REORDER) {
+				(*it)->updateSubscription(true, LEVEL | METER | PAN | SOLO);
 			}
 		}
 	}
 }
 
-int GetAllChannelsCount(bool countWithHidden)
-{
-	int channelCount = 0;
-
-	for (int i = 0; i < MAX_UA_DEVICES; i++)
-	{
-		if (g_ua_devices[i].ua_id.length() && (g_ua_devices[i].online || g_settings.show_offline_devices))
-		{
-			if (countWithHidden)
-				channelCount += g_ua_devices[i].GetActiveChannelsCount(UA_INPUT, UA_ALL_ENABLED_AND_ACTIVE);
-			else
-				channelCount += g_ua_devices[i].GetActiveChannelsCount(UA_INPUT, UA_VISIBLE);
-		}
-	}
-	return channelCount;
-}
-
-Channel *GetChannelPtr(ChannelIndex *cIndex)
-{
-	if (!cIndex->IsValid())
-		return NULL;
-
-	return &g_ua_devices[cIndex->deviceIndex].inputs[cIndex->inputIndex];
-}
-
-Channel *GetChannelPtr(int deviceIndex, int inputIndex)
-{
-	ChannelIndex index = ChannelIndex(deviceIndex, inputIndex);
-	return GetChannelPtr(&index);
-}
-
-UADevice *GetDevicePtrByUAId(string ua_device_id)
-{
+UADevice *getDeviceByUAId(string ua_device_id) {
+	const std::lock_guard<std::mutex> lock(g_mutex_uaDevices);
+	
 	if (ua_device_id.length() == 0)
 		return NULL;
 
-	for (int n = 0; n < MAX_UA_DEVICES; n++)
-	{
-		if (g_ua_devices[n].ua_id == ua_device_id)
-		{
-			return &g_ua_devices[n];
+	for (auto it = g_ua_devices.begin(); it != g_ua_devices.end(); ++it) {
+		if ((*it)->id == ua_device_id) {
+			return *it;
 		}
 	}
 	return NULL;
 }
 
-Send *GetSendPtrByUAIds(Channel *channel, string ua_send_id)
+Send *Channel::getSendByName(const string &name)
 {
-	if (!channel || ua_send_id.length() == 0)
-		return NULL;
+	unordered_map<string, Send*>::iterator res = this->sendsByName.find(name);
 
-	for (int n = 0; n < channel->sendCount; n++)
-	{
-		if (ua_send_id == channel->sends[n].ua_id)
-		{
-			return &channel->sends[n];
-		}
+	if (res != this->sendsByName.end()) {
+		return res->second;
 	}
 
 	return NULL;
 }
 
-int GetSendIndexByUAIds(Channel *channel, string ua_send_id)
+Send* Channel::getSendByUAId(const string &id)
 {
-	if (!channel || ua_send_id.length() == 0)
-		return -1;
+	unordered_map<string, Send*>::iterator res = this->sendsById.find(id);
 
-	for (int n = 0; n < channel->sendCount; n++)
-	{
-		if (ua_send_id == channel->sends[n].ua_id)
-		{
-			return n;
-		}
+	if (res != this->sendsById.end()) {
+		return res->second;
 	}
 
-	return -1;
-}
-
-Channel *GetChannelPtrByUAIds(string ua_device_id, string ua_input_id)
-{
-	UADevice *dev = GetDevicePtrByUAId(ua_device_id);
-	if (!dev)
-		return NULL;
-
-	if (ua_input_id.length() == 0)
-		return NULL;
-
-	if (!dev->inputs || dev->inputsCount < 1)
-		return NULL;
-
-	for (int n = 0; n < dev->inputsCount; n++)
-	{
-		if (dev->inputs[n].ua_id == ua_input_id)
-		{
-			return &dev->inputs[n];
-		}
-	}
 	return NULL;
 }
 
-ChannelIndex GetChannelIdByTouchpointId(bool _is_mouse, SDL_TouchFingerEvent *touch_input)
+Channel *getChannelByUAIds(string ua_device_id, string ua_channel_id, int type)
+{
+	string type_str;
+	if (type == INPUT) {
+		type_str = ".input.";
+	}
+	else if (type == AUX) {
+		type_str = ".aux.";
+	}
+	else if (type == MASTER) {
+		type_str = ".master.";
+	}
+
+	unordered_map<string, Channel*>::iterator res = g_channelsById.find(ua_device_id + type_str + ua_channel_id);
+	
+	if (res != g_channelsById.end()) {
+		return res->second;
+	}
+
+	return NULL;
+}
+
+Channel* getChannelByTouchpointId(bool _is_mouse, SDL_TouchFingerEvent *touch_input)
 {
 	if (!touch_input && !_is_mouse)
-		return ChannelIndex(-1, -1);
+		return NULL;
 
-	bool btn_select = (g_btnSelectChannels->checked);
+	bool btn_select = g_btnSelectChannels->isHighlighted();
 
-	for (int i = 0; i < MAX_UA_DEVICES; i++)
-	{
-		if (g_ua_devices[i].ua_id.length() && g_ua_devices[i].inputsCount && g_ua_devices[i].inputs)
+	int index = 0;
+	for (set<Channel*>::iterator it = g_touchpointChannels.begin(); it != g_touchpointChannels.end(); ++it) {
+		if (!(*it)->isVisible(!btn_select))
+			continue;
+
+		if ((touch_input && (*it)->touch_point.id == touch_input->touchId
+			&& (*it)->touch_point.finger_id == touch_input->fingerId)
+			|| (_is_mouse && (*it)->touch_point.is_mouse))
 		{
-			for (int n = 0; n < g_ua_devices[i].inputsCount; n++)
-			{
-				if (!g_ua_devices[i].IsChannelVisible(UA_INPUT, n, !btn_select))
-					continue;
-
-				if (touch_input && g_ua_devices[i].inputs[n].touch_point.id == touch_input->touchId 
-					&& g_ua_devices[i].inputs[n].touch_point.finger_id == touch_input->fingerId
-					|| _is_mouse && g_ua_devices[i].inputs[n].touch_point.is_mouse)
-				{
-					return ChannelIndex(i, n);
-				}
-			}
+			return (*it);
 		}
+		index++;
 	}
 
-	return ChannelIndex(-1, -1);
+	return NULL;
 }
 
-ChannelIndex GetChannelIdByPosition(Vector2D pt) // client-position; e.g. touch / mouseclick
+Channel* getChannelByPosition(Vector2D pt) // client-position; e.g. touch / mouseclick
 {
 	//offset
 	pt.subtractX(g_channel_offset_x);
@@ -1299,219 +1638,195 @@ ChannelIndex GetChannelIdByPosition(Vector2D pt) // client-position; e.g. touch 
 
 	if (pt.getY() >= 0 && pt.getY() < g_channel_height)
 	{
-		double div = (double)pt.getX() / g_channel_width;
+		int channelIndex = (int)floor(pt.getX() / g_channel_width);
+		bool btn_select = g_btnSelectChannels->isHighlighted();
 
-		int channels_per_page = CalculateChannelsPerPage();
-
-		div = floor(div);
-		if (div >= 0 && div < channels_per_page)
+		if (channelIndex >= 0 && channelIndex < g_channels_per_page)
 		{
-			int deviceIndex = 0;
-			int channelIndex = (int)div;
-
-			channelIndex += g_page * channels_per_page;
-
-			for (int i = 0; i < MAX_UA_DEVICES; i++)
+			channelIndex += g_page * g_channels_per_page;
+			Channel* channel = NULL;
+			int visibleChannelsCount = getActiveChannelsCount(true);
+			if (channelIndex < visibleChannelsCount)
 			{
-				if (g_ua_devices[i].ua_id.length() && g_ua_devices[i].inputsCount && g_ua_devices[i].inputs)
-				{
-					int visibleChannelsCount = g_ua_devices[i].GetActiveChannelsCount(UA_INPUT, UA_VISIBLE);
-					if (channelIndex >= visibleChannelsCount)
+				int n = 0;
+				for (map<int, Channel*>::iterator it = g_channelsInOrder.begin(); it != g_channelsInOrder.end(); ++it) {
+
+					channel = it->second;
+					if (!it->second->isVisible(!btn_select))
 					{
-						channelIndex -= visibleChannelsCount;
-						deviceIndex = i + 1;
-						continue;
+						channelIndex++;
 					}
-					else
-					{
-						bool btn_select = (g_btnSelectChannels->checked);
-						for (int n = 0; n <= channelIndex; n++)
-						{
-							if (!g_ua_devices[i].IsChannelVisible(UA_INPUT, n, !btn_select))
-							{
-								channelIndex++;
-							}
-						}
+					if (n >= channelIndex || channelIndex >= (int)g_channelsInOrder.size()) {
 						break;
 					}
+					n++;
 				}
 			}
-
-
-			//überprüfen ob channel existiert
-			if (g_ua_devices[deviceIndex].ua_id.length() == 0)
-			{
-				deviceIndex = -1;
-				channelIndex = -1;
-			}
-			else if(channelIndex >= g_ua_devices[deviceIndex].inputsCount)
-			{
-				channelIndex = -1;
-			}
-
-			return ChannelIndex(deviceIndex, channelIndex);
+			return channel;
 		}
 	}
 
-	return ChannelIndex(-1,-1);
+	return NULL;
 }
 
-static int UA_PingServer(void *param)
+bool serverListAdd(const string& server) {
+	const std::lock_guard<std::mutex> lock(g_mutex_serverList);
+
+	bool exists = false;
+	for (auto it = g_ua_serverList.begin(); it != g_ua_serverList.end(); ++it) {
+		if (*it == server) {
+			exists = true;
+			break;
+		}
+	}
+	if (!exists) {
+		g_ua_serverList.push_back(server);
+		return true;
+	}
+
+	return false;
+}
+
+void serverListClear() {
+	const std::lock_guard<std::mutex> lock(g_mutex_serverList);
+	g_ua_serverList.clear();
+}
+
+string serverListGet(int i) {
+	const std::lock_guard<std::mutex> lock(g_mutex_serverList);
+	if (i < (int)g_ua_serverList.size()) {
+		return g_ua_serverList[i];
+	}
+	return "";
+}
+
+void cleanUpConnectionButtons()
 {
-	if (!param)
-		return 0;
-
-	string ip ((char*)param);
-
-	try
-	{
-		TCPClient* tcpClient = new TCPClient(ip, UA_TCP_PORT, NULL);
-
-		string computername = GetComputerNameByIP(ip);
-
-		bool exists = false;
-		for (int n = 0; n < g_ua_server_list.size(); n++)
-		{
-			if (g_ua_server_list[n] == computername)
-			{
-				exists = true;
-				break;
-			}
-		}
-
-		if (!exists)
-		{
-			g_ua_server_list.push_back(computername);
-
-			UpdateConnectButtons();
-
-			toLog("UA-Server found on " + g_ua_server_list.back());
-		}
-
-		SAFE_DELETE(tcpClient);
-	}
-	catch (string error) {
-		if (g_settings.extended_logging) {
-			toLog("No UA-Server found on " + ip);
-		}
-	}
-	free(param);
-
-	return 0;
-}
-
-void UA_GetServerListCallback(string ip) {
-	if (ip.substr(0, 4) == "127.") {
-		//check localhost
-		char *scanIpBuffer = (char*)malloc(sizeof(char) * 16);
-		if (scanIpBuffer) {
-			ip.copy(scanIpBuffer, ip.length());
-			scanIpBuffer[ip.length()] = '\0';
-			string threadName = "PingUAServer on " + ip;
-			SDL_Thread *thread = SDL_CreateThread(UA_PingServer, threadName.c_str(), (void*)scanIpBuffer);
-			if (!thread) {
-				if (g_settings.extended_logging) {
-					toLog("Error in UA_GetServerListCallback at SDL_CreateThread " + ip);
-				}
-			}
-			else {
-				pingThreadsList.push_back(thread);
-			}
-		}
-		else {
-			if (g_settings.extended_logging) {
-				toLog("Error in UA_GetServerListCallback at SDL_CreateThread " + ip + "(out of memory)");
-			}
-		}
-	}
-	else {
-		size_t cut = ip.find_last_of('.');
-		string ipFragment = ip.substr(0, cut + 1);
-
-		for (int n = 0; n < 256; n++) {
-			ip = ipFragment + to_string(n);
-			char* scanIpBuffer = (char*)malloc(sizeof(char) * 16);
-			if (scanIpBuffer) {
-				ip.copy(scanIpBuffer, ip.length());
-				scanIpBuffer[ip.length()] = '\0';
-				string threadName = "PingUAServer on " + ip;
-				SDL_Thread *thread = SDL_CreateThread(UA_PingServer, threadName.c_str(), scanIpBuffer);
-				if (!thread) {
-					if (g_settings.extended_logging) {
-						toLog("Error in UA_GetServerListCallback at SDL_CreateThread " + ip);
-					}
-				}
-				else {
-					pingThreadsList.push_back(thread);
-				}
-			}
-			else {
-				if (g_settings.extended_logging) {
-					toLog("Error in UA_GetServerListCallback at SDL_CreateThread " + ip + "(out of memory)");
-				}
-			}
-		}
-	}
-}
-
-void TerminateAllPingThreads() {
-	for (vector<SDL_Thread*>::iterator it = pingThreadsList.begin(); it != pingThreadsList.end(); ++it) {
-		SDL_DetachThread(*it);
-	}
-	pingThreadsList.clear();
-}
-
-
-void CleanUpConnectionButtons()
-{
-	for (int n = 0; n < g_btnConnect.size(); n++) {
+	for (size_t n = 0; n < g_btnConnect.size(); n++) {
 		SAFE_DELETE(g_btnConnect[n]);
 	}
 	g_btnConnect.clear();
 }
 
-void CleanUpSendButtons()
-{
-	for (int n = 0; n < g_btnSends.size(); n++) {
-		SAFE_DELETE(g_btnSends[n]);
+void cleanUpSendButtons() {
+	for (vector<pair<string, Button*>>::iterator it = g_btnSends.begin(); it != g_btnSends.end(); ++it) {
+		SAFE_DELETE(it->second);
 	}
 	g_btnSends.clear();
 }
 
-void SetRedrawWindow(bool redraw)
+void setRedrawWindow(bool redraw)
 {
-//	const lock_guard<mutex> lock(g_redraw_mutex);
 	g_redraw = redraw;
 }
 
-bool GetRedrawWindow()
+bool getRedrawWindow()
 {
-//	const lock_guard<mutex> lock(g_redraw_mutex);
 	return g_redraw;
 }
 
-Uint32 TimerCallbackRefreshServerList(Uint32 interval, void *param) //g_timer_network_serverlist
+Uint32 timerCallbackSelectAllChannels(Uint32 interval, void* param) {
+	if (g_selectAllChannelsCountdown == 5) { // select all
+		for (unordered_map<string, Channel*>::iterator it = g_channelsById.begin(); it != g_channelsById.end(); ++it) {
+			it->second->selected_to_show = !it->second->isOverriddenHide();
+		}
+	}
+	else if (g_selectAllChannelsCountdown == 1) { // select none
+		g_selectAllChannelsCountdown = 0;
+		SDL_RemoveTimer(g_timerSelectAllChannels);
+		g_timerSelectAllChannels = 0;
+
+		for (unordered_map<string, Channel*>::iterator it = g_channelsById.begin(); it != g_channelsById.end(); ++it) {
+			it->second->selected_to_show = it->second->isOverriddenShow();
+		}
+
+		setRedrawWindow(true);
+		return 0;
+	}
+	g_selectAllChannelsCountdown--;
+	setRedrawWindow(true);
+	return interval;
+}
+
+Uint32 timerCallbackReenableMuteAll(Uint32 interval, void* param) {
+	SDL_RemoveTimer(g_timerReenableMuteAll);
+	g_timerReenableMuteAll = 0;
+	g_btnMuteAll->setEnable(true);
+	setRedrawWindow(true);
+	return 0;
+}
+
+Uint32 timerCallbackUnmuteAll(Uint32 interval, void* param) {
+	if (g_unmuteAllCountdown == 1) {
+		g_unmuteAllCountdown = 0;
+		SDL_RemoveTimer(g_timerUnmuteAll);
+		g_timerUnmuteAll = 0;
+
+		g_btnMuteAll->setEnable(false);
+		if (!g_timerReenableMuteAll) {
+			g_timerReenableMuteAll = SDL_AddTimer(getActiveChannelsCount(false) * MUTE_ALL_CHANNEL_INTERVAL, timerCallbackReenableMuteAll, NULL);
+		}		
+		setRedrawWindow(true);
+		muteChannels(false, true);
+
+		return 0;
+	}
+	g_unmuteAllCountdown--;
+	setRedrawWindow(true);
+	return interval;
+}
+
+Uint32 timerCallbackResetOrder(Uint32 interval, void* param) {
+	if (g_resetOrderCountdown == 1) {
+		g_resetOrderCountdown = 0;
+		SDL_RemoveTimer(g_timerResetOrder);
+		g_timerResetOrder = 0;
+		pushEvent(EVENT_RESET_ORDER);
+		return 0;
+	}
+	g_resetOrderCountdown--;
+	setRedrawWindow(true);
+	return interval;
+}
+
+Uint32 timerCallbackFlipPage(Uint32 interval, void* param) {
+
+	Channel* channel = (Channel*)param;
+	if (channel->touch_point.pt_end_x < g_channel_offset_x) {
+		if (pageLeft()) {
+			g_dragPageFlip--;
+		}
+		return 1200;
+	}
+	else if (channel->touch_point.pt_end_x > g_channel_offset_x + (float)g_channels_per_page * g_channel_width) {
+		if (pageRight()) {
+			g_dragPageFlip++;
+		}
+		return 1200;
+	}
+	SDL_RemoveTimer(g_timerFlipPage);
+	g_timerFlipPage = 0;
+	return 0;
+}
+
+Uint32 timerCallbackRefreshServerList(Uint32 interval, void *param) //g_timer_network_serverlist
 {
-	if (!IS_UA_SERVER_REFRESHING)
+	if (!g_refreshingServerList)
 	{
-		SetRedrawWindow(true);
+		setRedrawWindow(true);
 		SDL_RemoveTimer(g_timer_network_serverlist);
 		g_timer_network_serverlist = 0;
 		return 0;
 	}
 
-	SetRedrawWindow(true);
+	setRedrawWindow(true);
 	return interval;
 }
 
-Uint32 TimerCallbackReconnect(Uint32 interval, void* param) //g_timer_network_reconnect
+Uint32 timerCallbackReconnect(Uint32 interval, void* param) //g_timer_network_reconnect
 {
 	if (g_ua_server_connected.length() == 0 && g_ua_server_last_connection != -1) {
-		SDL_Event event;
-		memset(&event, 0, sizeof(SDL_Event));
-		event.type = SDL_USEREVENT;
-		event.user.code = EVENT_CONNECT;
-		SDL_PushEvent(&event);
+		pushEvent(EVENT_CONNECT);
 	}
 	else {
 		SDL_RemoveTimer(g_timer_network_reconnect);
@@ -1522,131 +1837,192 @@ Uint32 TimerCallbackReconnect(Uint32 interval, void* param) //g_timer_network_re
 	return interval;
 }
 
-Uint32 TimerCallbackNetworkTimeout(Uint32 interval, void* param) //g_timer_network_timeout
+Uint32 timerCallbackNetworkTimeout(Uint32 interval, void* param) //g_timer_network_timeout
 {
 	g_msg = "Network timeout";
-	toLog(g_msg);
-	Disconnect();
+	writeLog(LOG_INFO, g_msg);
+	
+	pushEvent(EVENT_DISCONNECT);
 
-	SetRedrawWindow(true);
+	setRedrawWindow(true);
 	SDL_RemoveTimer(g_timer_network_timeout);
 	g_timer_network_timeout = 0;
 
 	// try to reconnect
 	if (g_settings.reconnect_time && g_timer_network_reconnect == 0) {
-		g_timer_network_reconnect = SDL_AddTimer(g_settings.reconnect_time, TimerCallbackReconnect, NULL);
+		g_timer_network_reconnect = SDL_AddTimer(g_settings.reconnect_time, timerCallbackReconnect, NULL);
 	}
 
 	return 0;
 }
 
-Uint32 TimerCallbackNetworkSendTimeoutMsg(Uint32 interval, void* param) //g_timer_network_timeout
+Uint32 timerCallbackNetworkSendTimeoutMsg(Uint32 interval, void* param) //g_timer_network_timeout
 {
-	UA_TCPClientSend("get /devices/0/Name/"); // just ask for sth to check if the connection is alive
+	tcpClientSend("get /devices/0/Name/"); // just ask for sth to check if the connection is alive
 	SDL_RemoveTimer(g_timer_network_send_timeout_msg);
 	g_timer_network_send_timeout_msg = 0;
 
 	return 0;
 }
 
-void SetNetworkTimeout() {
-#ifndef SIMULATION
+void setNetworkTimeout() {
 
 	if (g_timer_network_send_timeout_msg != 0) {
 		SDL_RemoveTimer(g_timer_network_send_timeout_msg);
 	}
-	g_timer_network_send_timeout_msg = SDL_AddTimer(5000, TimerCallbackNetworkSendTimeoutMsg, NULL);
+	g_timer_network_send_timeout_msg = SDL_AddTimer(4000, timerCallbackNetworkSendTimeoutMsg, NULL);
 
 	if (g_timer_network_timeout != 0) {
 		SDL_RemoveTimer(g_timer_network_timeout);
 	}
-	g_timer_network_timeout = SDL_AddTimer(10000, TimerCallbackNetworkTimeout, NULL);
-#endif
+	g_timer_network_timeout = SDL_AddTimer(10000, timerCallbackNetworkTimeout, NULL);
 }
 
-#ifdef SIMULATION
-bool UA_GetServerList()
-{
-	g_ua_server_last_connection = -1;
+int SDLCALL muteAllThread(void* param) {
+	bool mute = (*(int*)param) & 0b01;
+	bool all = (*(int*)param) & 0b10;
 
-	CleanUpConnectionButtons();
+	if (mute) {
+		for (unordered_map<string, Channel*>::iterator it = g_channelsById.begin(); it != g_channelsById.end(); ++it) {
+			if (it->second->mute) {
+				g_channelsMutedBeforeAllMute.insert("MIX." + it->first);
+			}
+			if (g_settings.lock_to_mix.length() == 0 || g_settings.lock_to_mix == "MIX") {
+				it->second->pressMute(ON);
+			}
 
-	SetRedrawWindow(true);
+			for (vector<pair<string, Button*>>::iterator itB = g_btnSends.begin(); itB != g_btnSends.end(); ++itB) {
+				Send* send = it->second->getSendByName(itB->first);
+				if (send) {
 
-	g_ua_server_list.clear();
-	g_ua_server_list.push_back("Simulation");
+					if (send->mute) {
+						g_channelsMutedBeforeAllMute.insert(itB->first + "." + it->first);
+					}
+					if (g_settings.lock_to_mix.length() == 0 || g_settings.lock_to_mix == itB->second->getText()) {
+						send->pressMute(ON);
+					}
+				}
+			}
+			SDL_Delay(MUTE_ALL_CHANNEL_INTERVAL);
+		}
+	}
+	else {
+		for (unordered_map<string, Channel*>::iterator it = g_channelsById.begin(); it != g_channelsById.end(); ++it) {
+			if (g_settings.lock_to_mix.length() == 0 || g_settings.lock_to_mix == "MIX") {
+				if (all || g_channelsMutedBeforeAllMute.find("MIX." + it->first) == g_channelsMutedBeforeAllMute.end()) {
+					it->second->pressMute(OFF);
+				}
+			}
 
-	UpdateConnectButtons();
-
-	return true;
+			for (vector<pair<string, Button*>>::iterator itB = g_btnSends.begin(); itB != g_btnSends.end(); ++itB) {
+				if (g_settings.lock_to_mix.length() == 0 || g_settings.lock_to_mix == itB->first) {
+					if (all || g_channelsMutedBeforeAllMute.find(itB->first + "." + it->first) == g_channelsMutedBeforeAllMute.end()) {
+						Send* send = it->second->getSendByName(itB->first);
+						if (send) {
+							send->pressMute(OFF);
+						}
+					}
+				}
+			}
+			SDL_Delay(MUTE_ALL_CHANNEL_INTERVAL);
+		}
+		g_channelsMutedBeforeAllMute.clear();
+	}
+	return 0;
 }
-#endif
 
-#ifndef SIMULATION
-bool UA_GetServerList()
+int SDLCALL getServerListThread(void *param)
 {
 	if (g_serverlist_defined)
-		return false;
+		return 0;
 
-	if (IS_UA_SERVER_REFRESHING)
-		return false;
+	if (g_refreshingServerList)
+		return 0;
 
-	TerminateAllPingThreads();
+	g_refreshingServerList = true;
 
 	g_ua_server_last_connection = -1;
-	g_ua_server_list.clear();
+	serverListClear();
 
-	UpdateConnectButtons();
-
-	g_server_refresh_start_time = GetTickCount64(); //10sec
+	pushEvent(EVENT_UPDATE_CONNECT_BUTTONS);
+	updateConnectButtons();
+	g_btnSimulation->setVisible(false);
 
 	if(g_timer_network_serverlist == 0)
-		g_timer_network_serverlist = SDL_AddTimer(1000, TimerCallbackRefreshServerList, NULL);
+		g_timer_network_serverlist = SDL_AddTimer(1000, timerCallbackRefreshServerList, NULL);
 
-	SetRedrawWindow(true);
-
-	if (!GetClientIPs(UA_GetServerListCallback))
+	vector<string> ips;
+	if (!TCPClient::getClientIPs(ips))
 		return false;
+
+	setRedrawWindow(true);
+	
+#ifndef __linux__
+	vector<string> serverList;
+	TCPClient::lookUpServers("127.0.0.", 1, 2, UA_TCP_PORT, SERVER_TEST_TIMEOUT, serverList);
+	if (!serverList.empty()) {
+		for (auto itSL = serverList.begin(); itSL != serverList.end(); ++itSL) {
+			serverListAdd(TCPClient::getComputerNameByIP(*itSL));
+		}
+		pushEvent(EVENT_UPDATE_CONNECT_BUTTONS);
+	}
+#endif
+
+	for (auto it = ips.begin(); it != ips.end(); ++it) {
+		if ((*it).substr(0, 4) != "127.") {
+			size_t cut = (*it).find_last_of('.');
+			if (cut != string::npos) {
+				vector<string> serverList;
+				TCPClient::lookUpServers((*it).substr(0, cut + 1), 1, 255, UA_TCP_PORT, SERVER_TEST_TIMEOUT, serverList);
+				if (!serverList.empty()) {
+					for (auto itSL = serverList.begin(); itSL != serverList.end(); ++itSL) {
+						serverListAdd(TCPClient::getComputerNameByIP(*itSL));
+					}
+					pushEvent(EVENT_UPDATE_CONNECT_BUTTONS);
+				}
+			}
+		}
+	}
+	g_btnSimulation->setVisible(g_ua_serverList.empty());
+	setRedrawWindow(true);
+
+	g_refreshingServerList = false;
 
 	return true;
 }
-#endif
 
-void UA_TCPClientProc(int msg, string data)
+void getServerList() {
+
+    SDL_CreateThread(getServerListThread, "getServerListThread", NULL);
+}
+
+void tcpClientProc(int msg, const string &data)
 {
-	if (!g_tcpClient)
-		return;
-
 	switch (msg)
 	{
 	case MSG_CLIENT_CONNECTED:
-//		OutputDebugString("Connected");
 		break;
 	case MSG_CLIENT_DISCONNECTED:
-//		OutputDebugString("Disconnected");
 		break;
 	case MSG_CLIENT_CONNECTION_LOST:
 	{
 		// try to reconnect
 		if (g_settings.reconnect_time && g_timer_network_reconnect == 0) {
-			g_timer_network_reconnect = SDL_AddTimer(g_settings.reconnect_time, TimerCallbackReconnect, NULL);
+			g_timer_network_reconnect = SDL_AddTimer(g_settings.reconnect_time, timerCallbackReconnect, NULL);
 		}
 
 		//send message disconnect
-		SDL_Event event;
-		memset(&event, 0, sizeof(SDL_Event));
-		event.type = SDL_USEREVENT;
-		event.user.code = EVENT_DISCONNECT;
-		SDL_PushEvent(&event);
+		pushEvent(EVENT_DISCONNECT);
 		break;
 	}
 	case MSG_TEXT:
 	{
-		SetNetworkTimeout();
+		setNetworkTimeout();
 
-		string tcp_msg = json_workaround_secure_unicode_characters(data);
-
-		if(g_settings.extended_logging) toLog("UA <- " + tcp_msg);
+		if (g_settings.extended_logging) {
+			string tcp_msg = data;
+			writeLog(LOG_INFO | LOG_EXTENDED, "UA <- " + json_workaround_secure_unicode_characters(tcp_msg));
+		}
 		
 		string path_parameter[12];
 
@@ -1658,15 +2034,15 @@ void UA_TCPClientProc(int msg, string data)
 			//path
 			dom::element element = parser.parse(json); // parse a string
 			string_view sv = element["path"];
-			string path{sv};
+			string path{ sv };
 
 			//path aufsplitten
-			int i = 0;
-			int lpos = 1;
+			size_t i = 0;
+			size_t lpos = 1;
 			do
 			{
-				int rpos = path.find_first_of('/', lpos);
-				if (rpos != -1)
+				size_t rpos = path.find_first_of('/', lpos);
+				if (rpos != string::npos)
 				{
 					path_parameter[i] = path.substr(lpos, rpos - lpos);
 					i++;
@@ -1677,444 +2053,391 @@ void UA_TCPClientProc(int msg, string data)
 					break;
 				}
 				lpos = rpos + 1;
-			} while (lpos != -1 && i < 12);
+			} while (lpos != string::npos && i < 12);
 
 			//daten anhand path_parameter verarbeiten
-			if (path_parameter[0] == "devices") // devices laden
+			if (path_parameter[0] == "Session" || path_parameter[0] == "IOMapPreset") {
+				if (!isLoading()) {
+					pushEvent(EVENT_DEVICES_INITIATE_RELOAD);
+				}
+			}
+			else if (path_parameter[0] == "PostFaderMetering") {
+				pushEvent(EVENT_POST_FADER_METERING, (void*)(bool)element["data"]);
+			}
+			else if (path_parameter[0] == "devices") // devices laden
 			{
 				if (path_parameter[1].length() == 0)
 				{
-					int i = 0;
 					const dom::object obj = element["data"]["children"];
-
-					//load device info
+					vector<string>* strDevices = new vector<string>();
 					for (dom::object::iterator it = obj.begin(); it != obj.end(); ++it) {
-						string value{ it.key() };
-						g_ua_devices[i].LoadDevice(value);
-						i++;
+						string id{ it.key() };
+						strDevices->push_back(id);
 					}
+					pushEvent(EVENT_DEVICES_LOAD, (void*)strDevices);
 				}
-			/*	else if (path_parameter[2] == "MultiUnitOrder")
-				{
-					Disconnect();
-					for (int sel = 0; sel < g_connection_btns; sel++) {
-						if (g_btnConnect[sel].checked) {
-							Connect(sel); // thread unsafe!
-						}
-					}
-				}*/
-				else if (path_parameter[2] == "DeviceOnline")
-				{
-					UADevice *dev = GetDevicePtrByUAId(path_parameter[1]);
-					if (dev)
-					{
-						dev->online = element["data"];
-						UpdateSubscriptions();
-
-					//	string msg = "subscribe /devices/" + dev->ua_id + "/MultiUnitOrder";
-					//	UA_TCPClientSend(msg.c_str());
-
-					//	if (dev->online) { // load device
-
-							if (dev == &g_ua_devices[0]) { // CueBusCount nur für erstes device erfragen
-								string msg = "subscribe /devices/" + dev->ua_id + "/CueBusCount";
-								UA_TCPClientSend(msg.c_str());
-							}
-
-							string msg = "get /devices/" + dev->ua_id + "/inputs";
-							UA_TCPClientSend(msg.c_str());
-					//	}
-					/*	else {
-							dev->ClearChannels();
-							SetRedrawWindow(true);
-						}*/
-					}
+				else if (path_parameter[2] == "DeviceOnline") {
+					pushEvent(EVENT_DEVICE_ONLINE, (void*)new string(path_parameter[1]), (void*)(bool)element["data"]);
 				}
-				else if (path_parameter[2] == "CueBusCount")
-				{
-					UADevice *dev = GetDevicePtrByUAId(path_parameter[1]);
-					if (dev)
-					{
-						int sends_count = (int)((int64_t)element["data"]) + 2; // +2 wegen aux
-						CreateSendButtons(sends_count);
-
-						// sendnamen abfragen
-						for (int n = 0; n < g_btnSends.size(); n++) {
-							//namen der sends erfragen
-							string msg = "get /devices/" + dev->ua_id + "/inputs/0/sends/" + to_string(n) + "/Name/value/";
-							UA_TCPClientSend(msg.c_str());
-						}
-
-						SetRedrawWindow(true);
-					}
+				else if (path_parameter[2] == "CueBusCount") {
+					int *cueBusCount = new int;
+					*cueBusCount = (int)((int64_t)element["data"]);
+					pushEvent(EVENT_SENDS_LOAD, (void*)cueBusCount);
 				}
-				if (path_parameter[2] == "inputs" && path_parameter[3] == "0" && 
-					path_parameter[4] == "sends" && path_parameter[6] == "Name" && path_parameter[7] == "value") //sendsnames
+				else if (path_parameter[2] == "inputs" || path_parameter[2] == "auxs" || path_parameter[2] == "outputs")
 				{
-					//data
-					string_view sv = element["data"];
-					string value{ sv };
-					value = unescape_to_utf8(value);
+					if (path_parameter[3].length() == 0) {
 
-					int index = stoi(path_parameter[5]);
-					if (index >= 0 && index < g_btnSends.size())
-					{
-						g_btnSends[index]->text = value;
-						LoadServerSettings(g_ua_server_connected, g_btnSends[index]);
-					}
-
-					SetRedrawWindow(true);
-				}
-				else if (path_parameter[2] == "inputs" && path_parameter[3].length() == 0) // inputs laden
-				{
-					UADevice *dev = GetDevicePtrByUAId(path_parameter[1]);
-					if (dev)
-					{
 						const dom::object obj = element["data"]["children"];
 
-						int sz = obj.size();
-						dev->AllocChannels(UA_INPUT, sz);
-
-						int i = 0;
-						//load device info
+						vector<string>* pIds = new vector<string>();
 						for (dom::object::iterator it = obj.begin(); it != obj.end(); ++it) {
-							string value{ it.key() };
-							dev->LoadChannels(UA_INPUT, i, value);
-							i++;
+							string id{ it.key() };
+							pIds->push_back(id);
 						}
 
-						LoadServerSettings(g_ua_server_connected, dev);
-					//	dev->SubscribeChannels(UA_INPUT);
-					}
-				}
-				else if (path_parameter[2] == "auxs" && path_parameter[3].length() == 0) // aux laden
-				{
-					UADevice *dev = GetDevicePtrByUAId(path_parameter[1]);
-					if (dev)
-					{
-						const dom::object obj = element["data"]["children"];
-
-						int sz = obj.size();
-						dev->AllocChannels(UA_AUX, sz);
-
-						int i = 0;
-						//load device info
-						for (dom::object::iterator it = obj.begin(); it != obj.end(); ++it) {
-							string value{ it.key() };
-							dev->LoadChannels(UA_INPUT, i, value);
-							i++;
+						string* devStr = new string(path_parameter[1]);
+						if (path_parameter[2] == "inputs") {
+							pushEvent(EVENT_INPUTS_LOAD, (void*)pIds, (void*)devStr);
 						}
-
-						LoadServerSettings(g_ua_server_connected, dev);
-					//	dev->SubscribeChannels(UA_INPUT);
+						else if (path_parameter[2] == "auxs") {
+							pushEvent(EVENT_AUXS_LOAD, (void*)pIds, (void*)devStr);
+						}
+						else if (path_parameter[2] == "outputs") {
+							pushEvent(EVENT_OUTPUTS_LOAD, (void*)pIds, (void*)devStr);
+						}
 					}
-				}
-				else if(path_parameter[2] == "inputs")// input-nachrichten verarbeiten
-				{
-					Channel *channel = GetChannelPtrByUAIds(path_parameter[1], path_parameter[3]);
-					if (channel)
-					{
-						if (path_parameter[4] == "sends")//input sends
+					else {
+
+						int type = 0;
+						if (path_parameter[2] == "inputs") {
+							type = INPUT;
+						}
+						else if (path_parameter[2] == "auxs") {
+							type = AUX;
+						}
+						else if (path_parameter[2] == "outputs") {
+							type = MASTER;
+						}
+						Channel* channel = getChannelByUAIds(path_parameter[1], path_parameter[3], type);
+						if (channel)
 						{
-							if (path_parameter[5].length() == 0)//inputs send enumeration
+							if (path_parameter[4] == "sends")//input sends
 							{
-								const dom::object obj = element["data"]["children"];
-
-								int sz = obj.size();
-								channel->AllocSends(sz);
-
-								int i = 0;
-								//load device info
-								for (dom::object::iterator it = obj.begin(); it != obj.end(); ++it) {
-									string value{ it.key() };
-									channel->LoadSends(i, value);
-									i++;
-								}
-							//	channel->SubscribeSends();
-							}
-							else
-							{
-								Send *send = GetSendPtrByUAIds(channel, path_parameter[5]);
-								if (send)
+								if (path_parameter[5].length() != 0)
 								{
-									if (path_parameter[6] == "meters")//inputs
+									Send* send = channel->getSendByUAId(path_parameter[5]);
+									if (send)
 									{
-										if (path_parameter[7] == "0" && path_parameter[8] == "MeterLevel" && path_parameter[9] == "value")//inputs
+										if (path_parameter[6] == "meters")
 										{
-											double db = element["data"];
-											send->meter_level = fromDbFS(db);
-											if (db >= METER_THRESHOLD) {
-												SetRedrawWindow(true);
+											if (path_parameter[7] == "0" && path_parameter[8] == "MeterLevel" && path_parameter[9] == "value")
+											{
+												double db = element["data"];
+												double prev_meter_level = send->meter_level;
+												send->meter_level = min(1.0, fromDbFS(db));
+												if (db >= METER_THRESHOLD &&
+													((int)(toMeterScale(prev_meter_level) * UA_METER_PRECISION)) != ((int)(toMeterScale(send->meter_level) * UA_METER_PRECISION))) {
+													setRedrawWindow(true);
+												}
+											}
+
+											if (path_parameter[7] == "0" && path_parameter[8] == "MeterClip" && path_parameter[9] == "value")
+											{
+												send->clip = element["data"];
+												setRedrawWindow(true);
+											}
+
+											if (path_parameter[7] == "1" && path_parameter[8] == "MeterLevel" && path_parameter[9] == "value")
+											{
+												double db = element["data"];
+												double prev_meter_level2 = send->meter_level2;
+												send->meter_level2 = min(1.0, fromDbFS(db));
+												if (db >= METER_THRESHOLD &&
+													((int)(toMeterScale(prev_meter_level2) * UA_METER_PRECISION)) != ((int)(toMeterScale(send->meter_level2) * UA_METER_PRECISION))) {
+													setRedrawWindow(true);
+												}
+											}
+
+											if (path_parameter[7] == "1" && path_parameter[8] == "MeterClip" && path_parameter[9] == "value")
+											{
+												send->clip2 = element["data"];
+												setRedrawWindow(true);
 											}
 										}
-
-										if (path_parameter[7] == "1" && path_parameter[8] == "MeterLevel" && path_parameter[9] == "value")//inputs
+										else if (path_parameter[6] == "Gain" && channel->touch_point.action != TOUCH_ACTION_LEVEL)//sends
 										{
-											double db = element["data"];
-											send->meter_level2 = fromDbFS(db);
-											if (db >= METER_THRESHOLD) {
-												SetRedrawWindow(true);
+											if (path_parameter[7] == "value")
+											{
+												send->level = fromDbFS(element["data"]);
+												setRedrawWindow(true);
+											}
+										}
+										else if (path_parameter[6] == "Pan" && channel->touch_point.action != TOUCH_ACTION_PAN)//sends
+										{
+											if (path_parameter[7] == "value")
+											{
+												send->pan = element["data"];
+												setRedrawWindow(true);
+											}
+										}
+										else if (path_parameter[6] == "Bypass")//sends
+										{
+											if (path_parameter[7] == "value")
+											{
+												send->mute = element["data"];
+												setRedrawWindow(true);
 											}
 										}
 									}
-									else if (path_parameter[6] == "Gain" && send->channel->touch_point.action != TOUCH_ACTION_LEVEL)//sends
-									{
-										if (path_parameter[7] == "value")
-										{
-											send->gain = fromDbFS(element["data"]);
-											SetRedrawWindow(true);
-										}
-									}
-									else if (path_parameter[6] == "Pan" && send->channel->touch_point.action != TOUCH_ACTION_PAN)//sends
-									{
-										if (path_parameter[7] == "value")
-										{
-											send->pan = element["data"];
-											SetRedrawWindow(true);
-										}
-									}
-									else if (path_parameter[6] == "Bypass")//sends
-									{
-										if (path_parameter[7] == "value")
-										{
-											send->bypass = element["data"];
-											SetRedrawWindow(true);
-										}
+								}
+							}
+							else if (path_parameter[4] == "meters")
+							{
+								if (path_parameter[5] == "0" && path_parameter[6] == "MeterLevel" && path_parameter[7] == "value")
+								{
+									double db = element["data"];
+									double prev_meter_level = channel->meter_level;
+									channel->meter_level = min(1.0, fromDbFS(db));
+									if (db >= METER_THRESHOLD &&
+										((int)(toMeterScale(prev_meter_level) * UA_METER_PRECISION)) != ((int)(toMeterScale(channel->meter_level) * UA_METER_PRECISION))) {
+										setRedrawWindow(true);
 									}
 								}
-							}
-						}
-						else if (path_parameter[4] == "meters")//inputs
-						{
-							if (path_parameter[5] == "0" && path_parameter[6] == "MeterLevel" && path_parameter[7] == "value")//inputs
-							{
-								double db = element["data"];
-								channel->meter_level = fromDbFS(db);
-								if (db >= METER_THRESHOLD) {
-									SetRedrawWindow(true);
+								if (path_parameter[5] == "0" && path_parameter[6] == "MeterClip" && path_parameter[7] == "value")
+								{
+									channel->clip = element["data"];
+									setRedrawWindow(true);
+								}
+								if (path_parameter[5] == "1" && path_parameter[6] == "MeterLevel" && path_parameter[7] == "value")
+								{
+									double db = element["data"];
+									double prev_meter_level2 = channel->meter_level2;
+									channel->meter_level2 = min(1.0, fromDbFS(db));
+									if (db >= METER_THRESHOLD &&
+										((int)(toMeterScale(prev_meter_level2) * UA_METER_PRECISION)) != ((int)(toMeterScale(channel->meter_level2) * UA_METER_PRECISION))) {
+										setRedrawWindow(true);
+									}
+								}
+								if (path_parameter[5] == "1" && path_parameter[6] == "MeterClip" && path_parameter[7] == "value")
+								{
+									channel->clip2 = element["data"];
+									setRedrawWindow(true);
 								}
 							}
-							if (path_parameter[5] == "1" && path_parameter[6] == "MeterLevel" && path_parameter[7] == "value")//inputs
+							else if (path_parameter[4] == "FaderLevel" && channel->touch_point.action != TOUCH_ACTION_LEVEL)
 							{
-								double db = element["data"];
-								channel->meter_level2 = fromDbFS(db);
-								if (db >= METER_THRESHOLD) {
-									SetRedrawWindow(true);
+								if (path_parameter[5] == "value")
+								{
+									channel->level = fromDbFS((double)element["data"]);
+									setRedrawWindow(true);
 								}
 							}
-						}
-						else if (path_parameter[4] == "FaderLevel" && channel->touch_point.action != TOUCH_ACTION_LEVEL)//inputs
-						{
-							if (path_parameter[5] == "value")//inputs
+							else if (path_parameter[4] == "CRMonitorLevel" && channel->touch_point.action != TOUCH_ACTION_LEVEL)
 							{
-								channel->level = fromDbFS((double)element["data"]);
-								SetRedrawWindow(true);
+								if (path_parameter[5] == "value")
+								{
+									double dBlevel = (double)element["data"];
+									if (dBlevel > -96.0) {
+										channel->level = fromDbFS(dBlevel);
+									}
+									else {
+										channel->level = fromDbFS(-144.0);
+									}
+									setRedrawWindow(true);
+								}
 							}
-						}
-						else if (path_parameter[4] == "Name")//inputs
-						{
-							if (path_parameter[5] == "value")//inputs
-							{
-								//data
-								string_view sv = element["data"];
-								string value{sv};
-								channel->name = unescape_to_utf8(value);
+							else if (path_parameter[4] == "Name") {
+								if (path_parameter[5] == "value") {
 
-								// kanal in selektion übernehmen, wenn name mit ! beginnt
-								if (channel->IsOverriddenShow(true)) {
-									channel->selected_to_show = true;
-									UpdateSubscriptions();
+									string_view sv = element["data"];
+									string value{ sv };
+									channel->setName(unescape_to_utf8(value));
 								}
-								// kanal ausblenden wenn name mit # beginnt
-								else if (channel->IsOverriddenHide(true)) {
-									channel->selected_to_show = false;
-									UpdateMaxPages();
-									UpdateSubscriptions();
+							}
+							else if (path_parameter[4] == "Pan" && channel->touch_point.action != TOUCH_ACTION_PAN)
+							{
+								if (path_parameter[5] == "value")
+								{
+									channel->pan = element["data"];
+									setRedrawWindow(true);
 								}
-
-								SetRedrawWindow(true);
 							}
-						}
-						else if (path_parameter[4] == "Pan" && channel->touch_point.action != TOUCH_ACTION_PAN)//inputs
-						{
-							if (path_parameter[5] == "value")//inputs
+							else if (path_parameter[4] == "Pan2" && channel->touch_point.action != TOUCH_ACTION_PAN2)
 							{
-								channel->pan = element["data"];
-								SetRedrawWindow(true);
-							}
-						}
-						else if (path_parameter[4] == "Solo")//inputs
-						{
-							if (path_parameter[5] == "value")//inputs
-							{
-								channel->solo = element["data"];
-								SetRedrawWindow(true);
-							}
-						}
-						else if (path_parameter[4] == "Mute")//inputs
-						{
-							if (path_parameter[5] == "value")//inputs
-							{
-								channel->mute = element["data"];
-								SetRedrawWindow(true);
-							}
-						}
-						else if (path_parameter[4] == "Stereo")//inputs
-						{
-							if (path_parameter[5] == "value")//inputs
-							{
-								channel->stereo = element["data"];
-								UpdateSubscriptions();
-
-								SetRedrawWindow(true);
-							}
-						}
-						else if (path_parameter[4] == "StereoName")//inputs
-						{
-							if (path_parameter[5] == "value")//inputs
-							{
-								//data
-								string_view sv = element["data"];
-								string value{sv};
-								channel->stereoname = unescape_to_utf8(value);
-
-								// kanal in selektion übernehmen, wenn name mit ! beginnt
-								if (channel->IsOverriddenShow()) {
-									channel->selected_to_show = true;
-									UpdateSubscriptions();
+								if (path_parameter[5] == "value")
+								{
+									channel->pan2 = element["data"];
+									setRedrawWindow(true);
 								}
-								// kanal ausblenden wenn name mit # beginnt
-								else if (channel->IsOverriddenHide()) {
-									channel->selected_to_show = false;
-									UpdateMaxPages();
-									UpdateSubscriptions();
+							}
+							else if (path_parameter[4] == "Solo")
+							{
+								if (path_parameter[5] == "value")
+								{
+									channel->solo = element["data"];
+									setRedrawWindow(true);
 								}
-
-								SetRedrawWindow(true);
+							}
+							else if (path_parameter[4] == "SendPostFader")
+							{
+								if (path_parameter[5] == "value")
+								{
+									channel->post_fader = element["data"];
+									setRedrawWindow(true);
+								}
+							}
+							else if (path_parameter[4] == "Mute")
+							{
+								if (path_parameter[5] == "value")
+								{
+									bool result;
+									if (element["data"].get(result) == 0) {
+										channel->mute = result;
+										if (channel->type == AUX || channel->type == MASTER) {
+											if (!channel->active) {
+												channel->active = true;
+												pushEvent(EVENT_CHANNEL_STATE_CHANGED);
+											}
+										}
+										setRedrawWindow(true);
+									}
+								}
+							}
+							else if (path_parameter[4] == "Stereo") {
+								if (path_parameter[5] == "value") {
+									bool result;
+									if (element["data"].get(result) == 0) {
+										g_activeChannelsCount = -1;
+										g_visibleChannelsCount = -1;
+										channel->setStereo(result);
+									}
+								}
+							}
+							else if (path_parameter[4] == "StereoName") {
+								if (path_parameter[5] == "value") {
+									string_view sv;
+									if (element["data"].get(sv) == 0) {
+										string value{ sv };
+										channel->setStereoname(unescape_to_utf8(value));
+									}
+								}
+							}
+							else if (path_parameter[4] == "ChannelHidden")
+							{
+								if (path_parameter[5] == "value")
+								{
+									bool result;
+									if (element["data"].get(result) == 0) {
+										channel->hidden = result;
+										pushEvent(EVENT_CHANNEL_STATE_CHANGED);
+									}
+								}
+							}
+							else if (path_parameter[4] == "EnabledByUser")
+							{
+								if (path_parameter[5] == "value")
+								{
+									bool result;
+									if (element["data"].get(result) == 0) {
+										channel->enabledByUser = result;
+										pushEvent(EVENT_CHANNEL_STATE_CHANGED);
+									}
+								}
+							}
+							else if (path_parameter[4] == "Active")
+							{
+								if (path_parameter[5] == "value")
+								{
+									bool result;
+									if (element["data"].get(result) == 0) {
+										channel->active = result;
+										pushEvent(EVENT_CHANNEL_STATE_CHANGED);
+									}
+								}
 							}
 						}
-						else if (path_parameter[4] == "Pan2" && channel->touch_point.action != TOUCH_ACTION_PAN2)//inputs
-						{
-							if (path_parameter[5] == "value")//inputs
-							{
-								channel->pan2 = element["data"];
-								SetRedrawWindow(true);
-							}
-						}
-						else if (path_parameter[4] == "ChannelHidden")//inputs
-						{
-							if (path_parameter[5] == "value")//inputs
-							{
-								channel->hidden = element["data"];
-								UpdateSubscriptions();
-								SetRedrawWindow(true);
-							}
-						}
-						else if (path_parameter[4] == "EnabledByUser")//inputs
-						{
-							if (path_parameter[5] == "value")//inputs
-							{
-								channel->enabledByUser = element["data"];
-								UpdateSubscriptions();
-								SetRedrawWindow(true);
-							}
-						}
-						else if (path_parameter[4] == "Active")//inputs
-						{
-							if (path_parameter[5] == "value")//inputs
-							{
-								channel->active = element["data"];
-								UpdateSubscriptions();
-								SetRedrawWindow(true);
-							}
+						else {
+							writeLog(LOG_ERROR | LOG_EXTENDED, "Channel was NULL");
 						}
 					}
 				}
 			}
 
-			try
-			{
+			try {
 				//ua-error
 				const char *c;
 				if (element["error"].get_c_str().get(c) == SUCCESS) {
-					string s(c);
-					if (g_settings.extended_logging) {
-						toLog("UA-Error " + s);
-					}
+					writeLog(LOG_ERROR| LOG_EXTENDED, "UA-Error " + string(c));
 				}
 			}
-			catch (simdjson_error e) {}
+			catch (const simdjson_error&) {}
 		}
-		catch (simdjson_error e)
-		{
-			if (g_settings.extended_logging) {
-				toLog("JSON-Error: " + string(e.what()));
-			}
+		catch (const simdjson_error &e) {
+			writeLog(LOG_ERROR| LOG_EXTENDED, "JSON-Error: " + string(e.what()));
 		}
-		tcp_msg = "";
 		break;
 	}
 	}
 }
 
-void UA_TCPClientSend(const char *msg)
-{
-	if (g_tcpClient)
-	{
-		if(g_settings.extended_logging) toLog("UA -> " + string(msg));
-		g_tcpClient->Send(msg);
+void tcpClientSend(const string &msg) {
+	if (g_btnSimulation && g_btnSimulation->isHighlighted()) {
+		return;
+	}
+
+	if (g_tcpClient) {
+		writeLog(LOG_INFO| LOG_EXTENDED, "UA -> " + msg);
+		g_tcpClient->send(msg);
 	}
 }
 
-void DrawScaleMark(int x, int y, int scale_value, double total_scale) {
+void drawScaleMark(float x, float y, int scale_value, double total_scale) {
 	Vector2D sz = gfx->GetTextBlockSize(g_fntFaderScale, "-1234567890");
 	double v = fromDbFS((double)scale_value);
-	y = y - toMeterScale(v) * total_scale + total_scale;
+	y = y - (float)(toMeterScale(v) * total_scale) + (float)total_scale;
 
-	gfx->DrawShape(GFX_RECTANGLE, RGB(170, 170, 170), x + g_channel_width * 0.25, y, g_channel_width * 0.1, 1, GFX_NONE, 0.8f);
-	gfx->Write(g_fntFaderScale, x + g_channel_width * 0.24, y - sz.getY() * 0.5, to_string(scale_value), GFX_RIGHT, NULL,
-		GFX_NONE, 0.8f);
+	gfx->DrawShape(GFX_RECTANGLE, RGB(170, 170, 170), x + g_channel_width * 0.25f, y, g_channel_width * 0.1f, 1.0f, GFX_NONE, 0.8f);
+	gfx->Write(g_fntFaderScale, x + g_channel_width * 0.24f, y - sz.getY() * 0.5f, to_string(scale_value), GFX_RIGHT, NULL, GFX_NONE, 0.8f);
 }
 
-void DrawChannel(ChannelIndex index, float _x, float _y, float _width, float _height) {
+Module* Channel::getModule(const string &mixBus) {
+	if (mixBus == "MIX") {
+		return (Module*)this;
+	}
+	else {
+		return this->getSendByName(mixBus);
+	}
+	return NULL;
+}
+
+void Channel::draw(float _x, float _y, float _width, float _height) {
+
 	float x = _x;
 	float y = _y;
 	float width = _width;
 	float height = _height;
-	Channel *channel = GetChannelPtr(&index);
-	if (!channel)
-		return;
 
 	float SPACE_X = 2.0f;
 	float SPACE_Y = 2.0f;
 
-	double level = 0;
-	bool mute = false;
-	double pan = 0;
-	double pan2 = 0;
-	double meter_level = -144.0;
-	double meter_level2 = -144.0;
-
 	Vector2D sz;
 	Vector2D stretch;
 
-	if (g_btnMix->checked) {
-		level = channel->level;
-		mute = channel->mute;
-		pan = channel->pan;
-		pan2 = channel->pan2;
-		meter_level = channel->meter_level;
-		meter_level2 = channel->meter_level2;
-	}
-	else if(channel) {
-		for (int n = 0; n < channel->sendCount && n < g_btnSends.size(); n++) {
-			if (g_btnSends[n]->checked) {
-				level = channel->sends[n].gain;
-				mute = channel->sends[n].bypass;
-				pan = channel->sends[n].pan;
-				meter_level = channel->sends[n].meter_level;
-				meter_level2 = channel->sends[n].meter_level2;
-				break;
+	Module* mod = this->getModule(g_selectedMixBus);
+	string name = this->getName();
+
+	if (this->type == AUX) {
+		if (name == "AUX 1") {
+			name = g_settings.label_aux1;
+			if (g_settings.label_aux1 == g_settings.label_aux2 || g_settings.label_aux1 == "AUX") {
+				name += " 1";
+			}
+		}
+		else if (name == "AUX 2") {
+			name = g_settings.label_aux2;
+			if (g_settings.label_aux1 == g_settings.label_aux2 || g_settings.label_aux2 == "AUX") {
+				name += " 2";
 			}
 		}
 	}
@@ -2122,9 +2445,11 @@ void DrawChannel(ChannelIndex index, float _x, float _y, float _width, float _he
 	bool gray = false;
 	bool highlight = false;
 
+	bool btn_select = g_btnSelectChannels->isHighlighted();
+
 	//SELECT CHANNELS
-	if (g_btnSelectChannels->checked) {
-		if (!channel->selected_to_show) {
+	if (btn_select) {
+		if (!this->selected_to_show) {
 			gray = true;
 		}
 		else {
@@ -2133,237 +2458,406 @@ void DrawChannel(ChannelIndex index, float _x, float _y, float _width, float _he
 	}
 
 	if(highlight) {
-		unsigned long clr = RGB(200, 200, 50);
+		unsigned int clr = RGB(200, 200, 50);
 
 		Vector2D pt = {_x - 1, _y};
-		ChannelIndex prev_channel_index = GetChannelIdByPosition(pt);
-		Channel *prev_channel = GetChannelPtr(&prev_channel_index);
-		if(!prev_channel || !prev_channel->selected_to_show)
-			gfx->DrawShape(GFX_RECTANGLE, clr, _x - SPACE_X, 0, SPACE_X, _height * 1.02, GFX_NONE, 0.5); // links
-
-		gfx->DrawShape(GFX_RECTANGLE, clr, _x, 0, _width - SPACE_X, SPACE_Y, GFX_NONE, 0.5); // oben
-		gfx->DrawShape(GFX_RECTANGLE, clr, _x, _height * 1.02 - SPACE_Y, _width - SPACE_X, SPACE_Y, GFX_NONE, 0.5); // unten
-		gfx->DrawShape(GFX_RECTANGLE, clr, _x + _width - SPACE_X, 0, SPACE_X, _height * 1.02, GFX_NONE, 0.5); // rechts
-	}
-
-	//LABEL überspringen und am Ende zeichenen (wg. asugrauen)
-	y += g_fader_label_height;
-	height -= g_fader_label_height;
-
-	//PAN
-	//tracker
-	if (g_btnMix->checked || !channel->stereo) {
-		float pan_width = width;
-		if (channel->stereo) {
-			pan_width /= 2;
-			float local_PAN_TRACKER_HEIGHT = pan_width;
-			if (local_PAN_TRACKER_HEIGHT > g_pantracker_height)
-				local_PAN_TRACKER_HEIGHT = g_pantracker_height;
-
-			stretch = Vector2D(local_PAN_TRACKER_HEIGHT, local_PAN_TRACKER_HEIGHT);
-			gfx->Draw(g_gsPan, x + pan_width + (pan_width - local_PAN_TRACKER_HEIGHT) / 2, y + (g_channel_pan_height - local_PAN_TRACKER_HEIGHT) / 2, NULL, 
-				GFX_NONE, 1.0, 0, NULL, &stretch);
-
-			gfx->Draw(g_gsPanPointer, x + pan_width + (pan_width - local_PAN_TRACKER_HEIGHT) / 2, y + (g_channel_pan_height - local_PAN_TRACKER_HEIGHT) / 2, NULL, 
-				GFX_NONE, 1.0, DEG2RAD(pan2 * 140), NULL, &stretch);
-
-			gfx->Draw(g_gsPan, x + (pan_width - local_PAN_TRACKER_HEIGHT) / 2, y + (g_channel_pan_height - local_PAN_TRACKER_HEIGHT) / 2, NULL, 
-				GFX_NONE, 1.0, 0, NULL, &stretch);
-
-			gfx->Draw(g_gsPanPointer, x + (pan_width - local_PAN_TRACKER_HEIGHT) / 2, y + (g_channel_pan_height - local_PAN_TRACKER_HEIGHT) / 2, NULL,
-				GFX_NONE, 1.0, DEG2RAD(pan * 140), NULL, &stretch);
-		}
-		else {
-			stretch = Vector2D(g_pantracker_height, g_pantracker_height);
-			gfx->Draw(g_gsPan, x + (pan_width - g_pantracker_height) / 2, y + (g_channel_pan_height - g_pantracker_height) / 2, NULL, 
-				GFX_NONE, 1.0, 0, NULL, &stretch);
-
-			gfx->Draw(g_gsPanPointer, x + (pan_width - g_pantracker_height) / 2, y + (g_channel_pan_height - g_pantracker_height) / 2, NULL, 
-				GFX_NONE, 1.0, DEG2RAD(pan * 140), NULL, &stretch);
+		Channel *prev_channel = getChannelByPosition(pt);
+		if (!prev_channel || !prev_channel->selected_to_show) {
+			gfx->DrawShape(GFX_RECTANGLE, clr, _x - SPACE_X, 0, SPACE_X, _height * 1.02f, GFX_NONE, 0.5f); // links
 		}
 
+		gfx->DrawShape(GFX_RECTANGLE, clr, _x, 0, _width - SPACE_X, SPACE_Y, GFX_NONE, 0.5f); // oben
+		gfx->DrawShape(GFX_RECTANGLE, clr, _x, _height * 1.02f - SPACE_Y, _width - SPACE_X, SPACE_Y, GFX_NONE, 0.5f); // unten
+		gfx->DrawShape(GFX_RECTANGLE, clr, _x + _width - SPACE_X, 0, SPACE_X, _height * 1.02f, GFX_NONE, 0.5f); // rechts
 	}
 
-	gfx->SetColor(g_fntMain, RGB(20, 20, 20));
-	gfx->SetColor(g_fntFaderScale, RGB(170,170,170));
-	gfx->SetColor(g_fntChannelBtn, RGB(80,80,80));
-		
-	y += g_channel_pan_height;
-	height -= g_channel_pan_height;
+	GFXSurface *gsLabel = NULL, *gsFader = NULL;
+	this->getColoredGfx(&gsLabel, &gsFader);
 
-	int x_offset = (width/2 - g_channel_btn_size) / 2;
-	COLORREF clr = 0;
-	//SOLO
-	if (g_btnMix->checked) {
+	if (mod) {
+		//LABEL überspringen und am Ende zeichenen (wg. asugrauen)
+		y += g_fader_label_height;
+		height -= g_fader_label_height;
+
+		if (this->type == INPUT) {
+			//PAN
+			//tracker
+			if (g_btnMix->isHighlighted() || !this->stereo) {
+				float pan_width = width;
+				if (this->stereo) {
+					pan_width /= 2;
+					float local_PAN_TRACKER_HEIGHT = pan_width;
+					if (local_PAN_TRACKER_HEIGHT > g_pantracker_height)
+						local_PAN_TRACKER_HEIGHT = g_pantracker_height;
+
+					stretch = Vector2D(local_PAN_TRACKER_HEIGHT, local_PAN_TRACKER_HEIGHT);
+					gfx->Draw(g_gsPan, x + pan_width + (pan_width - local_PAN_TRACKER_HEIGHT) / 2.0f, y + (g_channel_pan_height - local_PAN_TRACKER_HEIGHT) / 2.0f, NULL,
+						GFX_NONE, 1.0f, 0, NULL, &stretch);
+
+					gfx->Draw(g_gsPanPointer, x + pan_width + (pan_width - local_PAN_TRACKER_HEIGHT) / 2.0f, y + (g_channel_pan_height - local_PAN_TRACKER_HEIGHT) / 2.0f, NULL,
+						GFX_NONE, 1.0f, DEG2RAD((float)mod->pan2 * 140.0f), NULL, &stretch);
+
+					gfx->Draw(g_gsPan, x + (pan_width - local_PAN_TRACKER_HEIGHT) / 2.0f, y + (g_channel_pan_height - local_PAN_TRACKER_HEIGHT) / 2.0f, NULL,
+						GFX_NONE, 1.0f, 0, NULL, &stretch);
+
+					gfx->Draw(g_gsPanPointer, x + (pan_width - local_PAN_TRACKER_HEIGHT) / 2.0f, y + (g_channel_pan_height - local_PAN_TRACKER_HEIGHT) / 2.0f, NULL,
+						GFX_NONE, 1.0f, DEG2RAD((float)mod->pan * 140.0f), NULL, &stretch);
+				}
+				else {
+					stretch = Vector2D(g_pantracker_height, g_pantracker_height);
+					gfx->Draw(g_gsPan, x + (pan_width - g_pantracker_height) / 2.0f, y + (g_channel_pan_height - g_pantracker_height) / 2.0f, NULL,
+						GFX_NONE, 1.0f, 0, NULL, &stretch);
+
+					gfx->Draw(g_gsPanPointer, x + (pan_width - g_pantracker_height) / 2.0f, y + (g_channel_pan_height - g_pantracker_height) / 2.0f, NULL,
+						GFX_NONE, 1.0f, DEG2RAD((float)mod->pan * 140.0f), NULL, &stretch);
+				}
+
+			}
+		}
+
+		gfx->SetColor(g_fntMain, RGB(20, 20, 20));
+		gfx->SetColor(g_fntFaderScale, RGB(170, 170, 170));
+		gfx->SetColor(g_fntChannelBtn, RGB(80, 80, 80));
+
+		y += g_channel_pan_height;
+		height -= g_channel_pan_height;
+
+		float x_offset = (width / 2.0f - g_channel_btn_size) / 2.0f;
+		//SOLO
+		if (g_btnMix->isHighlighted()) {
+			int btn_switch = 0;
+			if ((this->type == AUX && !this->post_fader) || (this->type != AUX && this->solo)) {
+				btn_switch = 1;
+			}
+
+			GFXSurface* gsBtn = g_gsButtonRed[btn_switch];
+			string txt = "S";
+			if (this->type == AUX) {
+				gsBtn = g_gsButtonBlue[btn_switch];
+				txt = "PRE";
+			}
+
+			if (this->type != MASTER) {
+				stretch = Vector2D(g_channel_btn_size, g_channel_btn_size);
+				gfx->Draw(gsBtn, x + x_offset, y, NULL, GFX_NONE, 1.0, 0, NULL, &stretch);
+
+				sz = gfx->GetTextBlockSize(g_fntChannelBtn, txt, GFX_CENTER);
+				gfx->Write(g_fntChannelBtn, x + x_offset + g_channel_btn_size / 2, y + (g_channel_btn_size - sz.getY()) / 2, txt, GFX_CENTER);
+			}
+		}
+
+		//MUTE
 		int btn_switch = 0;
-		if (channel->solo) {
+		if (mod->mute) {
 			btn_switch = 1;
 		}
 
 		stretch = Vector2D(g_channel_btn_size, g_channel_btn_size);
-		gfx->Draw(g_gsButtonRed[btn_switch], x + x_offset, y, NULL, GFX_NONE, 1.0, 0, NULL, &stretch);
+		gfx->Draw(g_gsButtonYellow[btn_switch], x + x_offset + width / 2, y, NULL, GFX_NONE, 1.0, 0, NULL, &stretch);
 
-		sz = gfx->GetTextBlockSize(g_fntChannelBtn, "S", GFX_CENTER);
-		gfx->Write(g_fntChannelBtn, x + x_offset + g_channel_btn_size / 2, y + (g_channel_btn_size - sz.getY()) / 2, "S", GFX_CENTER);
-	}
+		sz = gfx->GetTextBlockSize(g_fntChannelBtn, "M", GFX_CENTER);
+		gfx->Write(g_fntChannelBtn, x + x_offset + g_channel_btn_size / 2 + width / 2, y + (g_channel_btn_size - sz.getY()) / 2, "M", GFX_CENTER);
 
-	//MUTE
-	int btn_switch = 0;
-	if (mute) {
-		btn_switch = 1;
-	}
+		y += g_channel_btn_size;
+		height -= g_channel_btn_size;
 
-	stretch = Vector2D(g_channel_btn_size, g_channel_btn_size);
-	gfx->Draw(g_gsButtonYellow[btn_switch], x + x_offset + width/2, y, NULL, GFX_NONE, 1.0, 0, NULL, &stretch);
+		if (this->type != MASTER) {
+			//GROUPLABEL
+			float group_y = _height - g_channel_btn_size;
+			sz = gfx->GetTextBlockSize(g_fntFaderScale, "Group");
+			gfx->Write(g_fntFaderScale, x + g_channel_width / 2.0f, group_y - sz.getY() - SPACE_Y * 2.0f, "Group", GFX_CENTER, NULL, GFX_NONE, 0.9f);
 
-	sz = gfx->GetTextBlockSize(g_fntChannelBtn, "M", GFX_CENTER);
-	gfx->Write(g_fntChannelBtn, x + x_offset + g_channel_btn_size / 2 + width / 2, y + (g_channel_btn_size - sz.getY())/2, "M", GFX_CENTER);
+			//GROUP1
+			btn_switch = 0;
+			if (this->fader_group == 1) {
+				btn_switch = 1;
+			}
 
-	y += g_channel_btn_size;
-	height -= g_channel_btn_size;
+			stretch = Vector2D(g_channel_btn_size, g_channel_btn_size);
+			gfx->Draw(g_gsButtonGreen[btn_switch], x + x_offset, group_y, NULL, GFX_NONE, 1.0, 0, NULL, &stretch);
 
-	//GROUPLABEL
-	float group_y = _height - g_channel_btn_size;
-	sz = gfx->GetTextBlockSize(g_fntFaderScale, "Group");
-	gfx->Write(g_fntFaderScale, x + g_channel_width / 2, group_y - sz.getY() - SPACE_Y *2, "Group", GFX_CENTER, NULL, GFX_NONE, 0.9);
+			sz = gfx->GetTextBlockSize(g_fntChannelBtn, "1", GFX_CENTER);
+			gfx->Write(g_fntChannelBtn, x + x_offset + g_channel_btn_size / 2, group_y + (g_channel_btn_size - sz.getY()) / 2, "1", GFX_CENTER);
 
-	//GROUP1
-	btn_switch = 0;
-	if (channel->fader_group == 1) {
-		btn_switch = 1;
-	}
+			//GROUP2
+			btn_switch = 0;
+			if (this->fader_group == 2) {
+				btn_switch = 1;
+			}
 
-	stretch = Vector2D(g_channel_btn_size, g_channel_btn_size);
-	gfx->Draw(g_gsButtonGreen[btn_switch], x + x_offset, group_y, NULL, GFX_NONE, 1.0, 0, NULL, &stretch);
+			stretch = Vector2D(g_channel_btn_size, g_channel_btn_size);
+			gfx->Draw(g_gsButtonBlue[btn_switch], x + x_offset + width / 2, group_y, NULL, GFX_NONE, 1.0, 0, NULL, &stretch);
 
-	sz = gfx->GetTextBlockSize(g_fntChannelBtn, "1", GFX_CENTER);
-	gfx->Write(g_fntChannelBtn, x + x_offset + g_channel_btn_size / 2, group_y + (g_channel_btn_size - sz.getY()) / 2, "1", GFX_CENTER);
-
-	//GROUP2
-	btn_switch = 0;
-	if (channel->fader_group == 2) {
-		btn_switch = 1;
-	}
-
-	stretch = Vector2D(g_channel_btn_size, g_channel_btn_size);
-	gfx->Draw(g_gsButtonBlue[btn_switch], x + x_offset + width / 2, group_y, NULL, GFX_NONE, 1.0, 0, NULL, &stretch);
-
-	sz = gfx->GetTextBlockSize(g_fntChannelBtn, "2", GFX_CENTER);
-	gfx->Write(g_fntChannelBtn, x + x_offset + g_channel_btn_size / 2 + width / 2, group_y + (g_channel_btn_size - sz.getY()) / 2, "2", GFX_CENTER);
-
-	//FADER
-	//rail
-	height -= g_channel_btn_size + sz.getY() + SPACE_Y; //Fader group unterhalb
-	float fader_rail_height = height - g_fadertracker_height;
-	stretch = Vector2D(g_faderrail_width, fader_rail_height);
-	gfx->Draw(g_gsFaderrail, x + (width - g_faderrail_width) / 2.0f, y + g_fadertracker_height / 2.0f, NULL, GFX_NONE, 1.0f, 0, NULL, &stretch);
-
-	float o = g_fadertracker_height / 2.0f; // toMeterScale(12.0f)* fader_rail_height;
-	DrawScaleMark(x, y + o, 12,  fader_rail_height);
-	DrawScaleMark(x, y + o, 6, fader_rail_height);
-	DrawScaleMark(x, y + o, 0, fader_rail_height);
-	DrawScaleMark(x, y + o, -6, fader_rail_height);
-	DrawScaleMark(x, y + o, -12, fader_rail_height);
-	DrawScaleMark(x, y + o, -20, fader_rail_height);
-	DrawScaleMark(x, y + o, -32, fader_rail_height);
-	DrawScaleMark(x, y + o, -52, fader_rail_height);
-	DrawScaleMark(x, y + o, -84, fader_rail_height);
-
-	//tracker
-	stretch = Vector2D(g_fadertracker_width, g_fadertracker_height);
-	gfx->Draw(g_gsFader, x + (width - g_fadertracker_width) / 2.0f, y + height - toMeterScale(level) * (height - g_fadertracker_height) - g_fadertracker_height, NULL, 
-			GFX_NONE, 1.0f, 0, NULL, &stretch);
-
-	//LEVELMETER
-	g_channel_slider_height = g_channel_height - g_fader_label_height - g_channel_pan_height;
-	float threshold = fader_rail_height * (float)toMeterScale(fromDbFS(METER_THRESHOLD));
-
-	gfx->DrawShape(GFX_RECTANGLE, METER_COLOR_BORDER, x + g_channel_width * 0.75f - 1.0f,
-		y + o - toMeterScale(DB_UNITY) * fader_rail_height + fader_rail_height - 1.0f,
-		7.0f, fader_rail_height * toMeterScale(DB_UNITY) + 2.0f - threshold);
-
-	gfx->DrawShape(GFX_RECTANGLE, METER_COLOR_BG, x + g_channel_width * 0.75f,
-		y + o - toMeterScale(DB_UNITY) * fader_rail_height + fader_rail_height,
-		5.0f, fader_rail_height * toMeterScale(DB_UNITY) - threshold);
-
-	if (meter_level > fromDbFS(METER_THRESHOLD)) {
-		float amplitude = round(fader_rail_height* (float)toMeterScale(meter_level));
-
-		gfx->DrawShape(GFX_RECTANGLE, METER_COLOR_GREEN, x + g_channel_width * 0.75f + 1.0f,
-			y + o + fader_rail_height - amplitude,
-			3.0f, amplitude - threshold);
-
-		if (meter_level > fromDbFS(-9.0)) {
-			gfx->DrawShape(GFX_RECTANGLE, METER_COLOR_YELLOW, x + g_channel_width * 0.75f + 1.0f,
-				y + o + fader_rail_height - amplitude,
-				3.0f, amplitude - fader_rail_height * toMeterScale(fromDbFS(-9.0)));
+			sz = gfx->GetTextBlockSize(g_fntChannelBtn, "2", GFX_CENTER);
+			gfx->Write(g_fntChannelBtn, x + x_offset + g_channel_btn_size / 2 + width / 2, group_y + (g_channel_btn_size - sz.getY()) / 2, "2", GFX_CENTER);
 		}
-	}
 
-	if (channel->stereo) {
+		//FADER
+		//rail
+		height -= g_channel_btn_size + sz.getY() + SPACE_Y; //Fader group unterhalb
+		g_faderrail_height = height - g_fadertracker_height;
+		if (this->type == MASTER) {
+			float shorten = (float)g_faderrail_height - (float)(toMeterScale(fromDbFS(0)) * g_faderrail_height);
+			stretch = Vector2D(g_faderrail_width, g_faderrail_height - shorten);
+			gfx->Draw(g_gsFaderrail, x + (width - g_faderrail_width) / 2.0f, y + g_fadertracker_height / 2.0f + shorten,
+				NULL, GFX_NONE, 1.0f, 0, NULL, &stretch);
+		}
+		else {
+			stretch = Vector2D(g_faderrail_width, g_faderrail_height);
+			gfx->Draw(g_gsFaderrail, x + (width - g_faderrail_width) / 2.0f, y + g_fadertracker_height / 2.0f,
+				NULL, GFX_NONE, 1.0f, 0, NULL, &stretch);
+		}
 
-		gfx->DrawShape(GFX_RECTANGLE, METER_COLOR_BORDER, x + g_channel_width * 0.75f + 5.0f,
-			y + o - toMeterScale(DB_UNITY) * fader_rail_height + fader_rail_height - 1.0f,
-			7.0f, fader_rail_height* toMeterScale(DB_UNITY) + 2.0f - threshold);
+		float o = g_fadertracker_height / 2.0f;
+
+		if (this->type != MASTER) {
+			drawScaleMark(x, y + o, 12, g_faderrail_height);
+			drawScaleMark(x, y + o, 6, g_faderrail_height);
+		}
+		drawScaleMark(x, y + o, 0, g_faderrail_height);
+		drawScaleMark(x, y + o, -6, g_faderrail_height);
+		drawScaleMark(x, y + o, -12, g_faderrail_height);
+		drawScaleMark(x, y + o, -20, g_faderrail_height);
+		drawScaleMark(x, y + o, -32, g_faderrail_height);
+		drawScaleMark(x, y + o, -52, g_faderrail_height);
+		drawScaleMark(x, y + o, -84, g_faderrail_height);
+
+		//tracker
+		if (!isnan(mod->level)) {
+			stretch = Vector2D(g_fadertracker_width, g_fadertracker_height);
+
+			gfx->Draw(gsFader, x + (width - g_fadertracker_width) / 2.0f,
+				y + height - (float)toMeterScale(mod->level) * (height - g_fadertracker_height) - g_fadertracker_height, NULL,
+				GFX_NONE, 1.0f, 0, NULL, &stretch);
+		}
+
+		//Clip LED
+		gfx->DrawShape(GFX_RECTANGLE, METER_COLOR_BORDER, x + g_channel_width * 0.75f - 1.0f,
+			y + o - (float)toMeterScale(UNITY) * g_faderrail_height + g_faderrail_height - 10.0f,
+			7.0f, 9.0f);
+
+		gfx->DrawShape(GFX_RECTANGLE, METER_COLOR_BG, x + g_channel_width * 0.75f,
+			y + o - (float)toMeterScale(UNITY) * g_faderrail_height + g_faderrail_height - 8.0f,
+			5.0f, 7.0f);
+
+		if (mod->clip) {
+			gfx->DrawShape(GFX_RECTANGLE, METER_COLOR_RED, x + g_channel_width * 0.75f + 1,
+				y + o - (float)toMeterScale(UNITY) * g_faderrail_height + g_faderrail_height - 7.0f,
+				3.0f, 5.0f);
+		}
+
+		if (this->stereo) {
+			gfx->DrawShape(GFX_RECTANGLE, METER_COLOR_BORDER, x + g_channel_width * 0.75f + 5.0f,
+				y + o - (float)toMeterScale(UNITY) * g_faderrail_height + g_faderrail_height - 10.0f,
+				7.0f, 9.0f);
 
 			gfx->DrawShape(GFX_RECTANGLE, METER_COLOR_BG, x + g_channel_width * 0.75f + 6.0f,
-				y + o - toMeterScale(DB_UNITY) * fader_rail_height + fader_rail_height,
-				5.0f, fader_rail_height * toMeterScale(DB_UNITY) - threshold);
+				y + o - (float)toMeterScale(UNITY) * g_faderrail_height + g_faderrail_height - 8.0f,
+				5.0f, 7.0f);
 
-		if (meter_level > fromDbFS(METER_THRESHOLD)) {
-			float amplitude = round(fader_rail_height * (float)toMeterScale(meter_level2));
-
-			gfx->DrawShape(GFX_RECTANGLE, METER_COLOR_GREEN, x + g_channel_width * 0.75f + 7.0f,
-				y + o + fader_rail_height - amplitude,
-				3.0f, amplitude - threshold);
-
-			if (meter_level2 > fromDbFS(-9.0)) {
-				gfx->DrawShape(GFX_RECTANGLE, METER_COLOR_YELLOW, x + g_channel_width * 0.75f + 7.0f,
-					y + o + fader_rail_height - amplitude,
-					3.0f, amplitude - fader_rail_height * toMeterScale(fromDbFS(-9.0)));
+			if (mod->clip2) {
+				gfx->DrawShape(GFX_RECTANGLE, METER_COLOR_RED, x + g_channel_width * 0.75f + 7.0f,
+					y + o - (float)toMeterScale(UNITY) * g_faderrail_height + g_faderrail_height - 7.0f,
+					3.0f, 5.0f);
 			}
 		}
-	}
 
-	if (gray) {
-		gfx->DrawShape(GFX_RECTANGLE, RGB(20,20,20), _x, 0, _width, _height * 1.02, GFX_NONE, 0.7);
-	}
+		//LEVELMETER
+		float threshold = g_faderrail_height * (float)toMeterScale(fromDbFS(METER_THRESHOLD));
 
-	//selektion gesperrt (serverseitig überschrieben)
-	if (g_btnSelectChannels->checked && (channel->IsOverriddenHide() || channel->IsOverriddenShow())) {
-		gfx->DrawShape(GFX_RECTANGLE, RGB(255, 0, 0), _x, 0, _width, _height * 1.02, GFX_NONE, 0.1);
+		gfx->DrawShape(GFX_RECTANGLE, METER_COLOR_BORDER, x + g_channel_width * 0.75f - 1.0f,
+			y + o - (float)toMeterScale(UNITY) * g_faderrail_height + g_faderrail_height - 1.0f,
+			7.0f, g_faderrail_height * (float)toMeterScale(UNITY) + 2.0f - threshold);
 
-		gfx->SetColor(g_fntMain, WHITE);
-		gfx->SetShadow(g_fntMain, BLACK, 1);
-		sz = gfx->GetTextBlockSize(g_fntMain, "locked", GFX_CENTER);
-		gfx->Write(g_fntMain, _x + _width / 2, 0 + (_height - sz.getY()) / 2, "locked", GFX_CENTER);
-		gfx->SetShadow(g_fntMain, 0, 0);
+		gfx->DrawShape(GFX_RECTANGLE, METER_COLOR_BG, x + g_channel_width * 0.75f,
+			y + o - (float)toMeterScale(UNITY) * g_faderrail_height + g_faderrail_height,
+			5.0f, g_faderrail_height * (float)toMeterScale(UNITY) - threshold);
+
+		if (mod->meter_level > fromDbFS(METER_THRESHOLD)) {
+			float amplitude = round(g_faderrail_height * (float)toMeterScale(mod->meter_level));
+
+			gfx->DrawShape(GFX_RECTANGLE, METER_COLOR_GREEN, x + g_channel_width * 0.75f + 1.0f,
+				y + o + g_faderrail_height - amplitude,
+				3.0f, amplitude - threshold);
+
+			if (mod->meter_level > fromDbFS(-9.0)) {
+				gfx->DrawShape(GFX_RECTANGLE, METER_COLOR_YELLOW, x + g_channel_width * 0.75f + 1.0f,
+					y + o + g_faderrail_height - amplitude,
+					3.0f, amplitude - g_faderrail_height * (float)toMeterScale(fromDbFS(-9.0)));
+			}
+		}
+
+		if (this->stereo) {
+
+			gfx->DrawShape(GFX_RECTANGLE, METER_COLOR_BORDER, x + g_channel_width * 0.75f + 5.0f,
+				y + o - (float)toMeterScale(UNITY) * g_faderrail_height + g_faderrail_height - 1.0f,
+				7.0f, g_faderrail_height* (float)toMeterScale(UNITY) + 2.0f - threshold);
+
+			gfx->DrawShape(GFX_RECTANGLE, METER_COLOR_BG, x + g_channel_width * 0.75f + 6.0f,
+				y + o - (float)toMeterScale(UNITY) * g_faderrail_height + g_faderrail_height,
+				5.0f, g_faderrail_height* (float)toMeterScale(UNITY) - threshold);
+
+			if (mod->meter_level > fromDbFS(METER_THRESHOLD)) {
+				float amplitude = round(g_faderrail_height * (float)toMeterScale(mod->meter_level2));
+
+				gfx->DrawShape(GFX_RECTANGLE, METER_COLOR_GREEN, x + g_channel_width * 0.75f + 7.0f,
+					y + o + g_faderrail_height - amplitude,
+					3.0f, amplitude - threshold);
+
+				if (mod->meter_level2 > fromDbFS(-9.0)) {
+					gfx->DrawShape(GFX_RECTANGLE, METER_COLOR_YELLOW, x + g_channel_width * 0.75f + 7.0f,
+						y + o + g_faderrail_height - amplitude,
+						3.0f, amplitude - g_faderrail_height * (float)toMeterScale(fromDbFS(-9.0)));
+				}
+			}
+		}
+
+		if (gray) {
+			gfx->DrawShape(GFX_RECTANGLE, RGB(20, 20, 20), _x, 0, _width, _height * 1.02f, GFX_NONE, 0.7f);
+		}
+
+		//selektion gesperrt (serverseitig überschrieben)
+		if (btn_select && (this->isOverriddenHide() || this->isOverriddenShow())) {
+			gfx->DrawShape(GFX_RECTANGLE, RGB(255, 0, 0), _x, 0, _width, _height * 1.02f, GFX_NONE, 0.1f);
+
+			gfx->SetColor(g_fntMain, WHITE);
+			gfx->SetShadow(g_fntMain, BLACK, 1);
+			sz = gfx->GetTextBlockSize(g_fntMain, "locked", GFX_CENTER);
+			gfx->Write(g_fntMain, _x + _width / 2.0f, 0 + (_height - sz.getY()) / 2.0f, "locked", GFX_CENTER);
+			gfx->SetShadow(g_fntMain, 0, 0);
+		}
 	}
 
 	//LABEL
-	string name = channel->name;
-	if (channel->stereo)
-		name = channel->stereoname;
-
-	stretch = Vector2D(_width * 1.1, g_fader_label_height);
-	gfx->Draw(g_gsLabel[channel->label_gfx], _x - _width * 0.05, _y, NULL, GFX_NONE, 1.0, channel->label_rotation, NULL, &stretch);
+	stretch = Vector2D(_width * 1.1f, g_fader_label_height);
+	gfx->Draw(gsLabel, _x - _width * 0.05f, _y, NULL, GFX_NONE, 1.0f, this->label_rotation, NULL, &stretch);
 
 	Vector2D max_size = Vector2D(_width , g_fader_label_height);
 
-	if (name[0] == '!' || name[0] == '#') {
-		name = name.substr(1);
+	if (gsLabel == g_gsLabelBlack[this->label_gfx]) {
+		gfx->SetColor(g_fntLabel, WHITE);
+	}
+	else {
+		gfx->SetColor(g_fntLabel, BLACK);
 	}
 
-	do {
-		sz = gfx->GetTextBlockSize(g_fntLabel, name, GFX_CENTER);
-		if (sz.getX() > _width)
-			name = name.substr(0, name.length() - 1);
-	} while (sz.getX() > _width);
-
-	gfx->Write(g_fntLabel, _x, _y + (g_fader_label_height - sz.getY()) / 2, name, GFX_CENTER, &max_size);
+	gfx->Write(g_fntLabel, _x, _y + (g_fader_label_height - g_channel_label_fontsize) / 2.5f, shortenString(name, g_fntLabel, _width), GFX_CENTER, &max_size);
 }
 
-void Draw() {
+string shortenString(string s, GFXFont *fnt, float width) {
+
+	//split lines
+	vector<string> lines;
+	size_t front = 0;
+	size_t end;
+	do {
+		end = s.find_first_of('\n', front);
+		if (end == string::npos) {
+			lines.push_back(s.substr(front));
+		}
+		else {
+			end++;
+			lines.push_back(s.substr(front, end));
+			front = end;
+		}
+
+	} while (end != string::npos);
+
+	s = "";
+	for (auto it = lines.begin(); it != lines.end(); ++it) {
+		// remove spaces if (*it) too long
+		Vector2D sz;
+		size_t n = (*it).length() - 1;
+		do {
+			sz = gfx->GetTextBlockSize(fnt, (*it), GFX_CENTER);
+			if (sz.getX() > width && isspace((*it)[n])) {
+				(*it) = (*it).substr(0, n) + (*it).substr(n + 1, (*it).length() - n + 1);
+			}
+			n--;
+		} while (sz.getX() > width && n > 0);
+
+		// remove punctuation
+		n = (*it).length() - 1;
+		do {
+			sz = gfx->GetTextBlockSize(fnt, (*it), GFX_CENTER);
+			if (sz.getX() > width && ispunct((*it)[n])) {
+				(*it) = (*it).substr(0, n) + (*it).substr(n + 1, (*it).length() - n + 1);
+			}
+			n--;
+		} while (sz.getX() > width && n > 0);
+
+		// remove vowels if (*it) too long
+		n = (*it).length() - 1;
+		do {
+			sz = gfx->GetTextBlockSize(fnt, (*it), GFX_CENTER);
+			if (sz.getX() > width &&
+				((*it)[n] == 'a' || (*it)[n] == 'e' || (*it)[n] == 'i' || (*it)[n] == 'o' || (*it)[n] == 'u'
+					|| (*it)[n] == 'A' || (*it)[n] == 'E' || (*it)[n] == 'I' || (*it)[n] == 'O' || (*it)[n] == 'U')) {
+				(*it) = (*it).substr(0, n) + (*it).substr(n + 1, (*it).length() - n + 1);
+			}
+			n--;
+		} while (sz.getX() > width && n > 0);
+
+		// if (*it) still too long remove chars from the end
+		do {
+			sz = gfx->GetTextBlockSize(fnt, (*it), GFX_CENTER);
+			if (sz.getX() > width) {
+				(*it) = (*it).substr(0, (*it).length() - 1);
+			}
+		} while (sz.getX() > width);
+
+		s += (*it);
+	}
+	return s;
+}
+
+int getMiddleSelectedChannel() {
+
+	int index = 0;
+	int counter = 0;
+
+	for (map<int, Channel*>::iterator it = g_channelsInOrder.begin(); it != g_channelsInOrder.end(); ++it) {
+		if (!it->second->isVisible(!g_btnSelectChannels->isHighlighted())) {
+			continue;
+		}
+
+		if (counter >= g_page * g_channels_per_page + g_channels_per_page / 2) {
+			break;
+		}
+		counter++;
+		if (it->second->isVisible(true)) {
+			index++;
+		}
+	}
+	return index;
+}
+
+void browseToSelectedChannel(int index) {
+
+	if (g_btnSelectChannels->isHighlighted()) {
+		int i = index;
+		for (map<int, Channel*>::iterator it = g_channelsInOrder.begin(); it != g_channelsInOrder.end(); ++it) {
+			if (i <= 0) {
+				break;
+			}
+			if (it->second->isVisible(true)) {
+				i--;
+			}
+			else if (it->second->isVisible(false)) {
+				index++;
+			}
+		}
+	}
+	if (index == getActiveChannelsCount(false) + 1) {
+		g_page = 0;
+	}
+	else if (g_channels_per_page) {
+		g_page = index / g_channels_per_page;
+	}
+}
+
+void draw() {
+	
 	int w, h;
 	SDL_GetWindowSize(g_window, &w, &h);
 	float win_width = (float)w;
@@ -2374,11 +2868,37 @@ void Draw() {
 	//background
 	gfx->DrawShape(GFX_RECTANGLE, BLACK, 0, 0, win_width, win_height);
 
-	int channels_per_page = CalculateChannelsPerPage();
+	if (g_ua_server_connected.empty() && !g_btnSimulation->isHighlighted()) { //offline
+		sz = gfx->GetTextBlockSize(g_fntOffline, "Offline");
+		gfx->SetColor(g_fntOffline, RGB(100, 100, 100));
+		gfx->Write(g_fntOffline, win_width / 2, (win_height - sz.getY()) / 2, "Offline", GFX_CENTER);
+
+		string refresh_txt = ".refreshing serverlist.";
+		unsigned long long time = GetTickCount64() / 1000;
+
+		for (int n = 0; n < (int)(time % 4); n++)
+			refresh_txt = "." + refresh_txt + ".";
+
+		gfx->SetColor(g_fntMain, RGB(180, 180, 180));
+		if (!g_serverlist_defined) {
+			if (g_refreshingServerList)
+				gfx->Write(g_fntMain, win_width / 2, (win_height + sz.getY()) / 2, refresh_txt, GFX_CENTER);
+			else {
+				string text = (g_btnConnect.empty() ? "No servers found\n" : "");
+				text += "Click to refresh the serverlist";
+				
+				if (g_btnConnect.empty()) {
+					text += "\nor start the simulation";
+				}
+
+				gfx->Write(g_fntMain, win_width / 2, (win_height + sz.getY()) / 2, text, GFX_CENTER);
+			}
+		}
+	}
 
 	//bg right
 	stretch = Vector2D(g_channel_offset_x, win_height);
-	gfx->Draw(g_gsBgRight, g_channel_offset_x + g_channel_width * channels_per_page, 0, NULL, 
+	gfx->Draw(g_gsBgRight, g_channel_offset_x + g_channel_width * (float)g_channels_per_page, 0, NULL,
 		GFX_NONE, 1.0, 0, NULL, &stretch);
 
 	//bg left
@@ -2386,19 +2906,39 @@ void Draw() {
 	gfx->Draw(g_gsBgRight, 0, 0, NULL, GFX_HFLIP, 1.0, 0, NULL, &stretch);
 
 	//draw buttons
-	g_btnSettings->DrawButton(BTN_COLOR_GREEN);
-	for (int n = 0; n < g_btnSends.size(); n++) {
-		g_btnSends[n]->DrawButton(BTN_COLOR_BLUE);
+	g_btnMuteAll->draw(BTN_COLOR_RED);
+	for (vector<pair<string, Button*>>::iterator it = g_btnSends.begin(); it != g_btnSends.end(); ++it) {
+		if (it->second->getText() == "AUX 1") {
+			string text = g_settings.label_aux1;
+			if (g_settings.label_aux1 == g_settings.label_aux2 || g_settings.label_aux1 == "AUX") {
+				text += " 1";
+			}
+			text += "\nSend";
+			it->second->draw(BTN_COLOR_BLUE, text);
+		}
+		else if (it->second->getText() == "AUX 2") {
+			string text = g_settings.label_aux2;
+			if (g_settings.label_aux1 == g_settings.label_aux2 || g_settings.label_aux2 == "AUX") {
+				text += " 2";
+			}
+			text += "\nSend";
+			it->second->draw(BTN_COLOR_BLUE, text);
+		}
+		else {
+			it->second->draw(BTN_COLOR_BLUE);
+		}
 	}
-	g_btnMix->DrawButton(BTN_COLOR_BLUE);
+	g_btnMix->draw(BTN_COLOR_BLUE);
 
-	for (int n = 0; n < g_btnConnect.size(); n++) {
-		g_btnConnect[n]->DrawButton(BTN_COLOR_GREEN);
+	for (size_t n = 0; n < g_btnConnect.size(); n++) {
+		g_btnConnect[n]->draw(BTN_COLOR_GREEN);
 	}
-	g_btnChannelWidth->DrawButton(BTN_COLOR_GREEN);
-	g_btnPageLeft->DrawButton(BTN_COLOR_GREEN);
-	g_btnPageRight->DrawButton(BTN_COLOR_GREEN);
-	g_btnSelectChannels->DrawButton(BTN_COLOR_GREEN);
+	g_btnSimulation->draw(BTN_COLOR_GREEN);
+	g_btnChannelWidth->draw(BTN_COLOR_YELLOW);
+	g_btnPageLeft->draw(BTN_COLOR_YELLOW);
+	g_btnPageRight->draw(BTN_COLOR_YELLOW);
+	g_btnSelectChannels->draw(BTN_COLOR_YELLOW);
+	g_btnReorderChannels->draw(BTN_COLOR_YELLOW);
 
 	float SPACE_X = 2.0f;
 	float SPACE_Y = 2.0f;
@@ -2406,511 +2946,494 @@ void Draw() {
 	string str_page = "Page: " + to_string(g_page +1);
 
 	gfx->SetColor(g_fntMain, RGB(200, 200, 200));
-	gfx->Write(g_fntMain, g_btnPageLeft->rc.x + g_btnPageLeft->rc.w / 2,
-		g_btnPageLeft->rc.y - SPACE_Y * 2.0f - g_main_fontsize, str_page, GFX_CENTER);
+	gfx->Write(g_fntMain, g_btnPageLeft->getX() + g_btnPageLeft->getWidth() / 2,
+		g_btnPageLeft->getY() - SPACE_Y * 2.0f - g_main_fontsize, str_page, GFX_CENTER);
 
-	if (g_ua_server_connected.length() == 0) { //offline
-		sz = gfx->GetTextBlockSize(g_fntOffline, "Offline");
-		gfx->SetColor(g_fntOffline, RGB(100, 100, 100));
-		gfx->Write(g_fntOffline, win_width/2, (win_height - sz.getY())/2, "Offline", GFX_CENTER);
-
-		string refresh_txt = ".refreshing serverlist.";
-		unsigned long long time = GetTickCount64() / 1000;
-
-		for (int n = 0; n < (time % 4); n++)
-			refresh_txt = "." + refresh_txt + ".";
-
-		gfx->SetColor(g_fntMain, RGB(180, 180, 180));
-		if (!g_serverlist_defined) {
-			if (IS_UA_SERVER_REFRESHING)
-				gfx->Write(g_fntMain, win_width / 2, (win_height + sz.getY()) / 2, refresh_txt, GFX_CENTER);
-			else {
-				string text = (g_btnConnect.empty() ? "No servers found\n" : "");
-				text += "Click to refresh the serverlist";
-				gfx->Write(g_fntMain, win_width / 2, (win_height + sz.getY()) / 2, text, GFX_CENTER);
-			}
-		}
-	}
-	else {
+	if(!g_ua_server_connected.empty() || g_btnSimulation->isHighlighted()) { // online
 		int count = 0;
 		int offset = 0;
+		bool btn_select = g_btnSelectChannels->isHighlighted();
 		
 		//BG
-		stretch = Vector2D(g_channel_width * channels_per_page, win_height);
+		stretch = Vector2D(g_channel_width * (float)g_channels_per_page, win_height);
 		gfx->Draw(g_gsChannelBg, g_channel_offset_x, 0, NULL, 
 			GFX_NONE, 1.0, 0, NULL, &stretch);
 
-		for (int i = 0; i < MAX_UA_DEVICES; i++) {
-			if (g_ua_devices[i].ua_id.length() && 
-				(g_ua_devices[i].online || g_settings.show_offline_devices) && 
-				g_ua_devices[i].inputsCount && g_ua_devices[i].inputs) {
-				for (int n = 0; n < g_ua_devices[i].inputsCount; n++) {
-					if (!g_ua_devices[i].IsChannelVisible(UA_INPUT, n, !g_btnSelectChannels->checked))
-						continue;
+		Channel* reorderChannel = NULL;
+		for (map<int, Channel*>::iterator it = g_channelsInOrder.begin(); it != g_channelsInOrder.end(); ++it) {
+			if (!it->second->isVisible(!btn_select))
+				continue;
 
-					if (count >= g_page * channels_per_page && count < (g_page + 1) * channels_per_page) {
-						float x = g_channel_offset_x + offset * g_channel_width;
-						float y = g_channel_offset_y;
 
-						//channel seperator
-						gfx->DrawShape(GFX_RECTANGLE, BLACK, x + g_channel_width - SPACE_X / 2.0f, 0, SPACE_X, win_height, GFX_NONE, 0.7f);
+			if (it->second->touch_point.action == TOUCH_ACTION_REORDER) {
+				reorderChannel = it->second;
+			}
+			if (count >= g_page * g_channels_per_page && count < (g_page + 1) * g_channels_per_page) {
+				float x = g_channel_offset_x + (float)offset * g_channel_width;
 
-						DrawChannel(ChannelIndex(i, n), x, y, g_channel_width, g_channel_height);
+				//channel seperator
+				gfx->DrawShape(GFX_RECTANGLE, BLACK, x + g_channel_width - SPACE_X / 2.0f, 0, SPACE_X, win_height, GFX_NONE, 0.7f);
 
-						offset++;
-					}
-					count++;
+				if (it->second->touch_point.action != TOUCH_ACTION_REORDER) {
+					it->second->draw(x, g_channel_offset_y, g_channel_width, g_channel_height);
+				}
+
+				offset++;
+			}
+			count++;
+		}
+
+		if (reorderChannel) {
+			float offset = reorderChannel->touch_point.pt_start_x - g_channel_offset_x;
+			offset = -fmodf(offset, g_channel_width);
+			float x = reorderChannel->touch_point.pt_end_x + offset;
+
+			float reorderInsertX = ceil((x - g_channel_offset_x) / g_channel_width) * g_channel_width + g_channel_offset_x;
+			reorderInsertX = max(reorderInsertX, g_channel_offset_x);
+			reorderInsertX = min(reorderInsertX, g_channel_offset_x + g_channel_width * (float)g_channels_per_page);
+			if (g_page == maxPages(!g_btnSelectChannels->isHighlighted())) {
+				int channelsOnLastPage = getActiveChannelsCount(true) % g_channels_per_page;
+				if (channelsOnLastPage) {
+					reorderInsertX = min(reorderInsertX, g_channel_offset_x + g_channel_width * (float)channelsOnLastPage);
 				}
 			}
+			gfx->DrawShape(GFX_RECTANGLE, RGB(200, 200, 50), reorderInsertX - 4.0f, 0, 8.0f, win_height, GFX_NONE, 0.5f);
+
+			gfx->DrawShape(GFX_RECTANGLE, BLACK, x, 0, g_channel_width, win_height, GFX_NONE, 0.5f);
+			reorderChannel->draw(x, g_channel_offset_y, g_channel_width, g_channel_height);
 		}
 	}
 
 	if (g_msg.length()) {
-		sz = gfx->GetTextBlockSize(g_fntMain, g_msg);
-		gfx->SetColor(g_fntMain, WHITE);
-		gfx->SetShadow(g_fntMain, BLACK, 1.0);
-
-		gfx->DrawShape(GFX_RECTANGLE, WHITE, (win_width - sz.getX() - 20) / 2, (win_height - sz.getY() - 20) / 2, sz.getX() + 20, sz.getY() + 20, 0, 0.2);
-		gfx->DrawShape(GFX_RECTANGLE, BLACK, (win_width - sz.getX() - 16) / 2, (win_height - sz.getY() - 16) / 2, sz.getX() + 16, sz.getY() + 16, 0, 0.7);
-
-		gfx->Write(g_fntMain, win_width / 2, (win_height - sz.getY()) / 2, g_msg, GFX_CENTER);
-		gfx->SetShadow(g_fntMain, BLACK, 0);
-		gfx->SetColor(g_fntMain, BLACK);
-	}
-
-	if (g_btnSettings->checked) {
-		float x = g_channel_offset_x + 20.0f;
-		float y = 20.0f;
-		float vspace = 30.0f;
-
-		float box_height = g_btn_height * (8.0f + max(1.0f, (float)g_btnsServers.size())) / 2.0f + 5 * vspace + 52.0f;
-		float box_width = g_main_fontsize * 10.0f + 2.0f * g_btn_width + 40.0f;
-		gfx->DrawShape(GFX_RECTANGLE, WHITE, g_channel_offset_x, 0, box_width, box_height, 0, 0.3);
-		gfx->DrawShape(GFX_RECTANGLE, BLACK, g_channel_offset_x + 2, 2, box_width - 4, box_height - 4, 0, 0.9);
-
-		g_btnInfo->DrawButton(BTN_COLOR_GREEN);
-
-		y += g_btn_height / 2.0f + vspace;
-
-		string s = "Lock settings";
-		sz = gfx->GetTextBlockSize(g_fntMain, s);
-		gfx->SetColor(g_fntMain, WHITE);
-		gfx->Write(g_fntMain, x, y + (g_btn_height / 2.0f - sz.getY()) / 2.0f, s, GFX_LEFT);
-		g_btnLockSettings->rc.x = x + g_main_fontsize * 10.0f;
-		g_btnLockSettings->rc.y = y;
-		g_btnLockSettings->DrawButton(BTN_COLOR_GREEN);
-		y += g_btn_height / 2.0f + 2.0f + vspace;
-
-		s = "Lock to mix";
-		sz = gfx->GetTextBlockSize(g_fntMain, s);
-		gfx->SetColor(g_fntMain, WHITE);
-		gfx->Write(g_fntMain, x, y + (g_btn_height / 2.0f - sz.getY()) / 2.0f, s, GFX_LEFT);
-		g_btnLockToMixMIX->rc.x = x + g_main_fontsize * 10.0f;
-		g_btnLockToMixMIX->rc.y = y;
-		g_btnLockToMixMIX->DrawButton(BTN_COLOR_GREEN);
-
-		g_btnLockToMixCUE1->rc.x = x + g_main_fontsize * 10.0f + g_btn_width + 2.0f;
-		g_btnLockToMixCUE1->rc.y = y;
-		g_btnLockToMixCUE1->DrawButton(BTN_COLOR_GREEN);
-
-		y += g_btn_height / 2.0f + 2.0f;
-
-		g_btnLockToMixHP->rc.x = x + g_main_fontsize * 10.0f;
-		g_btnLockToMixHP->rc.y = y;
-		g_btnLockToMixHP->DrawButton(BTN_COLOR_GREEN);
-
-		g_btnLockToMixCUE2->rc.x = x + g_main_fontsize * 10.0f + g_btn_width + 2.0f;
-		g_btnLockToMixCUE2->rc.y = y;
-		g_btnLockToMixCUE2->DrawButton(BTN_COLOR_GREEN);
-
-		y += g_btn_height / 2.0f + 2.0f;
-
-		g_btnLockToMixAUX1->rc.x = x + g_main_fontsize * 10.0f;
-		g_btnLockToMixAUX1->rc.y = y;
-		g_btnLockToMixAUX1->DrawButton(BTN_COLOR_GREEN);
-
-		g_btnLockToMixCUE3->rc.x = x + g_main_fontsize * 10.0f + g_btn_width + 2.0f;
-		g_btnLockToMixCUE3->rc.y = y;
-		g_btnLockToMixCUE3->DrawButton(BTN_COLOR_GREEN);
-
-		y += g_btn_height / 2.0f + 2.0f;
-
-		g_btnLockToMixAUX2->rc.x = x + g_main_fontsize * 10.0f;
-		g_btnLockToMixAUX2->rc.y = y;
-		g_btnLockToMixAUX2->DrawButton(BTN_COLOR_GREEN);
-
-		g_btnLockToMixCUE4->rc.x = x + g_main_fontsize * 10.0f + g_btn_width + 2.0f;
-		g_btnLockToMixCUE4->rc.y = y;
-		g_btnLockToMixCUE4->DrawButton(BTN_COLOR_GREEN);
-
-		y += g_btn_height / 2.0f + 2.0f + vspace;
-
-		s = "Show offline devices";
-		sz = gfx->GetTextBlockSize(g_fntMain, s);
-		gfx->SetColor(g_fntMain, WHITE);
-		gfx->Write(g_fntMain, x, y + (g_btn_height / 2.0f - sz.getY()) / 2.0f, s, GFX_LEFT);
-		g_btnShowOfflineDevices->rc.x = x + g_main_fontsize * 10.0f;
-		g_btnShowOfflineDevices->rc.y = y;
-		g_btnShowOfflineDevices->DrawButton(BTN_COLOR_GREEN);
-		y += g_btn_height / 2.0f + 2.0f + vspace;
-
-		s = "Try to reconnect\nautomatically";
-		sz = gfx->GetTextBlockSize(g_fntMain, s);
-		gfx->SetColor(g_fntMain, WHITE);
-		gfx->Write(g_fntMain, x, y + (g_btn_height / 2.0f - sz.getY()) / 2.0f, s, GFX_LEFT);
-		g_btnReconnectOn->rc.x = x + g_main_fontsize * 10.0f;
-		g_btnReconnectOn->rc.y = y;
-		g_btnReconnectOn->DrawButton(BTN_COLOR_GREEN);
-		y += g_btn_height / 2.0f + 2.0f + vspace;
-
-		s = "Server list";
-		gfx->SetColor(g_fntMain, WHITE);
-		sz = gfx->GetTextBlockSize(g_fntMain, s);
-		gfx->Write(g_fntMain, x, y + (g_btn_height / 2.0f - sz.getY()) / 2.0f, s, GFX_LEFT);
-
-		g_btnServerlistScan->rc.x = x + g_main_fontsize * 10.0f;
-		g_btnServerlistScan->rc.y = y;
-		g_btnServerlistScan->DrawButton(BTN_COLOR_GREEN);
-
-		for (vector<Button*>::iterator it = g_btnsServers.begin(); it != g_btnsServers.end(); ++it) {
-			(*it)->rc.x = x + g_main_fontsize * 10.0f + (g_btn_width + 2.0f);
-			(*it)->rc.y = y;
-			(*it)->DrawButton(BTN_COLOR_GREEN);
-			y += g_btn_height / 2.0f + 2.0f;
-		}
-
-		gfx->SetColor(g_fntMain, BLACK);
-	}
-
-	if (g_btnInfo->checked) {
-		sz = gfx->GetTextBlockSize(g_fntInfo, INFO_TEXT);
-		gfx->SetColor(g_fntInfo, RGB(220,220,220));
+		sz = gfx->GetTextBlockSize(g_fntInfo, g_msg);
+		gfx->SetColor(g_fntInfo, WHITE);
 		gfx->SetShadow(g_fntInfo, BLACK, 1.0);
 
-		gfx->DrawShape(GFX_RECTANGLE, WHITE, (win_width - sz.getX() - 30) / 2, (win_height - sz.getY() - 30) / 2, sz.getX() + 30, sz.getY() + 30, 0, 0.3);
-		gfx->DrawShape(GFX_RECTANGLE, BLACK, (win_width - sz.getX() - 26) / 2, (win_height - sz.getY() - 26) / 2, sz.getX() + 26, sz.getY() + 26, 0, 0.9);
+		gfx->DrawShape(GFX_RECTANGLE, WHITE, (win_width - sz.getX() - 20.0f) / 2.0f, (win_height - sz.getY() - 20.0f) / 2.0f, 
+			sz.getX() + 20.0f, sz.getY() + 20.0f, 0, 0.2f);
+		gfx->DrawShape(GFX_RECTANGLE, BLACK, (win_width - sz.getX() - 16.0f) / 2.0f, (win_height - sz.getY() - 16.0f) / 2.0f, 
+			sz.getX() + 16.0f, sz.getY() + 16.0f, 0, 0.7f);
 
-		gfx->Write(g_fntInfo, win_width / 2, (win_height - sz.getY()) / 2, INFO_TEXT, GFX_CENTER);
+		gfx->Write(g_fntInfo, win_width / 2, (win_height - sz.getY()) / 2, g_msg, GFX_CENTER);
 		gfx->SetShadow(g_fntInfo, BLACK, 0);
 		gfx->SetColor(g_fntInfo, BLACK);
 	}
 
+	if (g_btnSettings->isHighlighted()) {
+
+		gfx->DrawShape(GFX_RECTANGLE, BLACK, 0, 0, win_width, win_height, 0, 0.7f);
+
+		gfx->DrawShape(GFX_RECTANGLE, WHITE, g_channel_offset_x, 0, g_settingsDlgWidth, g_settingsDlgHeight, 0, 0.3f);
+		gfx->DrawShape(GFX_RECTANGLE, BLACK, g_channel_offset_x + 2.0f, 2.0f, g_settingsDlgWidth - 4.0f, g_settingsDlgHeight - 4.0f, 0, 0.9f);
+
+		g_btnInfo->draw(BTN_COLOR_YELLOW);
+		g_btnFullscreen->draw(BTN_COLOR_GREEN);
+		g_btnLockSettings->draw(BTN_COLOR_GREEN);
+
+		float x = g_channel_offset_x + 20.0f;
+
+		string s = "Lock to mix";
+		sz = gfx->GetTextBlockSize(g_fntMain, s);
+		gfx->SetColor(g_fntMain, WHITE);
+		gfx->Write(g_fntMain, x, g_btnLockToMixMIX->getY() + g_btnLockToMixMIX->getHeight() / 2 - sz.getY() / 2.0f, 
+			shortenString(s, g_fntMain, g_settingsLabelWidth), GFX_LEFT);
+		g_btnLockToMixMIX->draw(BTN_COLOR_GREEN);
+		for (int n = 0; n < 2; n++) {
+			g_btnLockToMixAUX[n]->draw(BTN_COLOR_GREEN);
+		}
+		for (int n = 0; n < 4; n++) {
+			g_btnLockToMixCUE[n]->draw(BTN_COLOR_GREEN);
+		}
+
+		s = "Label AUX 1";
+		sz = gfx->GetTextBlockSize(g_fntMain, s);
+		gfx->SetColor(g_fntMain, WHITE);
+		gfx->Write(g_fntMain, x, g_btnLabelAUX1[0]->getY() + g_btnLabelAUX1[0]->getHeight() / 2 - sz.getY() / 2.0f, 
+			shortenString(s, g_fntMain, g_settingsLabelWidth), GFX_LEFT);
+		for (int n = 0; n < 4; n++) {
+			g_btnLabelAUX1[n]->draw(BTN_COLOR_GREEN);
+		}
+
+		s = "Label AUX 2";
+		sz = gfx->GetTextBlockSize(g_fntMain, s);
+		gfx->SetColor(g_fntMain, WHITE);
+		gfx->Write(g_fntMain, x, g_btnLabelAUX2[0]->getY() + g_btnLabelAUX2[0]->getHeight() / 2 - sz.getY() / 2.0f, 
+			shortenString(s, g_fntMain, g_settingsLabelWidth), GFX_LEFT);
+		for (int n = 0; n < 4; n++) {
+			g_btnLabelAUX2[n]->draw(BTN_COLOR_GREEN);
+		}
+
+		s = "MIX Meter";
+		sz = gfx->GetTextBlockSize(g_fntMain, s);
+		gfx->SetColor(g_fntMain, WHITE);
+		gfx->Write(g_fntMain, x, g_btnPostFaderMeter->getY() + g_btnPostFaderMeter->getHeight() / 2 - sz.getY() / 2.0f, 
+			shortenString(s, g_fntMain, g_settingsLabelWidth), GFX_LEFT);
+		g_btnPostFaderMeter->draw(BTN_COLOR_GREEN);
+
+		s = "Offline devices";
+		sz = gfx->GetTextBlockSize(g_fntMain, s);
+		gfx->SetColor(g_fntMain, WHITE);
+		gfx->Write(g_fntMain, x, g_btnShowOfflineDevices->getY() + g_btnShowOfflineDevices->getHeight() / 2 - sz.getY() / 2.0f, 
+			shortenString(s, g_fntMain, g_settingsLabelWidth), GFX_LEFT);
+		g_btnShowOfflineDevices->draw(BTN_COLOR_GREEN);
+
+		s = "Reconnect";
+		sz = gfx->GetTextBlockSize(g_fntMain, s);
+		gfx->SetColor(g_fntMain, WHITE);
+		gfx->Write(g_fntMain, x, g_btnReconnect->getY() + g_btnReconnect->getHeight() / 2 - sz.getY() / 2.0f, 
+			shortenString(s, g_fntMain, g_settingsLabelWidth), GFX_LEFT);
+		g_btnReconnect->draw(BTN_COLOR_GREEN);
+
+		s = "Server list";
+		gfx->SetColor(g_fntMain, WHITE);
+		sz = gfx->GetTextBlockSize(g_fntMain, s);
+		gfx->Write(g_fntMain, x, g_btnServerlistScan->getY() + g_btnServerlistScan->getHeight() / 2 - sz.getY() / 2.0f, 
+			shortenString(s, g_fntMain, g_settingsLabelWidth), GFX_LEFT);
+		g_btnServerlistScan->draw(BTN_COLOR_GREEN);
+		for (vector<Button*>::iterator it = g_btnsServers.begin(); it != g_btnsServers.end(); ++it) {
+			(*it)->draw(BTN_COLOR_GREEN);
+		}
+
+		gfx->SetColor(g_fntMain, BLACK);
+	}
+	g_btnSettings->draw(BTN_COLOR_YELLOW); // draw after settings screen
+
+	if (g_btnInfo->isHighlighted()) {
+
+		gfx->DrawShape(GFX_RECTANGLE, BLACK, 0, 0, win_width, win_height, 0, 0.7f);
+
+		sz = gfx->GetTextBlockSize(g_fntInfo, INFO_TEXT);
+		gfx->SetColor(g_fntInfo, RGB(220,220,220));
+		gfx->SetShadow(g_fntInfo, BLACK, 1.0f);
+
+		gfx->DrawShape(GFX_RECTANGLE, WHITE, (win_width - sz.getX() - 30.0f) / 2.0f, (win_height - sz.getY() - 30.0f) / 2.0f, 
+			sz.getX() + 30.0f, sz.getY() + 30.0f, 0, 0.3f);
+		gfx->DrawShape(GFX_RECTANGLE, BLACK, (win_width - sz.getX() - 26.0f) / 2.0f, (win_height - sz.getY() - 26.0f) / 2.0f, 
+			sz.getX() + 26.0f, sz.getY() + 26.0f, 0, 0.9f);
+
+		gfx->Write(g_fntInfo, win_width / 2.0f, (win_height - sz.getY()) / 2.0f, INFO_TEXT, GFX_CENTER);
+		gfx->SetShadow(g_fntInfo, BLACK, 0);
+		gfx->SetColor(g_fntInfo, BLACK);
+	}
+
+	if (g_resetOrderCountdown || g_unmuteAllCountdown || g_selectAllChannelsCountdown) {
+		string msg = "Hold for ";
+		
+		if (g_resetOrderCountdown) {
+			msg += to_string(g_resetOrderCountdown) + "s to reset channel order";
+		}
+		else if(g_unmuteAllCountdown) {
+			msg += to_string(g_unmuteAllCountdown) + "s to unmute all channels";
+			if (!g_settings.lock_to_mix.empty()) {
+				msg += " of " + g_settings.lock_to_mix;
+			}
+		}
+		else if (g_selectAllChannelsCountdown) {
+			if (g_selectAllChannelsCountdown > 4) {
+				msg += to_string(g_selectAllChannelsCountdown - 4) + "s to select all channels\n or ";
+			}
+			msg += to_string(g_selectAllChannelsCountdown) + "s to unselect all channels";
+		}
+
+		sz = gfx->GetTextBlockSize(g_fntInfo, msg);
+		gfx->SetColor(g_fntInfo, WHITE);
+		gfx->SetShadow(g_fntInfo, BLACK, 1.0);
+
+		gfx->DrawShape(GFX_RECTANGLE, WHITE, (win_width - sz.getX() - 20.0f) / 2.0f, (win_height - sz.getY() - 20.0f) / 2.0f,
+			sz.getX() + 20.0f, sz.getY() + 20.0f, 0, 0.2f);
+		gfx->DrawShape(GFX_RECTANGLE, BLACK, (win_width - sz.getX() - 16.0f) / 2.0f, (win_height - sz.getY() - 16.0f) / 2.0f,
+			sz.getX() + 16.0f, sz.getY() + 16.0f, 0, 0.7f);
+
+		gfx->Write(g_fntInfo, win_width / 2, (win_height - sz.getY()) / 2, msg, GFX_CENTER);
+		gfx->SetShadow(g_fntInfo, BLACK, 0);
+		gfx->SetColor(g_fntInfo, BLACK);
+	}
+	
 	gfx->Update();
 }
 
-#ifdef SIMULATION
-bool Connect(int connection_index)
-{
-	if (connection_index != g_ua_server_last_connection) {
-		g_page = 0;
-	}
-
-	g_ua_server_connected = g_ua_server_list[connection_index];
-
-	g_ua_devices[0].ua_id = "0";
-	g_ua_devices[0].AllocChannels(UA_INPUT, SIMULATION_CHANNEL_COUNT);
-	for (int n = 0; n < SIMULATION_CHANNEL_COUNT; n++)
-	{
-		g_ua_devices[0].LoadChannels(UA_INPUT, n, to_string(n));
-		g_ua_devices[0].inputs[n].name = "Analog " + to_string(n + 1);
-		g_ua_devices[0].inputs[n].AllocSends(SIMULATION_SENDS_COUNT);
-		for (int i = 0; i < SIMULATION_SENDS_COUNT; i++)
-		{
-			g_ua_devices[0].inputs[n].LoadSends(i, to_string(i));
-		}
-	}
-
-	g_btnSelectChannels->enabled=true;
-	g_btnChannelWidth->enabled=true;
-	g_btnPageLeft->enabled=true;
-	g_btnPageRight->enabled=true;
-	g_btnMix->enabled=true;
-
-	g_ua_server_last_connection = connection_index;
-
-	SetRedrawWindow(true);
-
-	return true;
+void setLoadingState(bool loading) {
+	g_loading = loading;
 }
-#endif
 
-#ifndef SIMULATION
-bool Connect(int connection_index)
+bool isLoading() {
+	return g_loading;
+}
+
+bool connect(int connection_index)
 {
-	if (connection_index != g_ua_server_last_connection) {
-		g_page = 0;
+	if (g_ua_server_connected.length()) {
+		disconnect();
 	}
 
-	if (g_ua_server_list[connection_index].length() == 0)
+	if (connection_index != g_ua_server_last_connection) {
+		g_page = 0;
+		SDL_RemoveTimer(g_timerReenableMuteAll);
+		g_btnMuteAll->setCheck(false);
+		g_channelsMutedBeforeAllMute.clear();
+	}
+
+	if (serverListGet(connection_index).empty())
 		return false;
 
 	//connect to UA
 	try
 	{
-		g_msg = "Connecting to " + g_ua_server_list[connection_index] + ":" + UA_TCP_PORT;
-		Draw(); // force draw
+		g_msg = "Connecting to " + serverListGet(connection_index) + ":" + UA_TCP_PORT;
+		writeLog(LOG_INFO | LOG_EXTENDED, g_msg);
+		draw(); // force draw
 
-		g_tcpClient = new TCPClient(g_ua_server_list[connection_index].c_str(), UA_TCP_PORT, &UA_TCPClientProc);
-		g_ua_server_connected = g_ua_server_list[connection_index];
-		toLog("UA:  Connected on " + g_ua_server_list[connection_index] + ":" + UA_TCP_PORT);
+		g_ua_server_last_connection = connection_index;
 
-		UA_TCPClientSend("get /devices");
+		g_tcpClient = new TCPClient(serverListGet(connection_index), UA_TCP_PORT, &tcpClientProc);
+		g_ua_server_connected = serverListGet(connection_index);
+		writeLog(LOG_INFO, "UA:  Connected on " + serverListGet(connection_index) + ":" + UA_TCP_PORT);
 
-		g_btnSelectChannels->enabled = true;
-		g_btnChannelWidth->enabled = true;
-		g_btnPageLeft->enabled = true;
-		g_btnPageRight->enabled = true;
-		g_btnMix->enabled = true;
+		setLoadingState(true);
+		tcpClientSend("subscribe /Session");
+		tcpClientSend("subscribe /IOMapPreset");
+		tcpClientSend("subscribe /PostFaderMetering");
+		tcpClientSend("get /devices");
 
-		for (int n = 0; n < g_btnConnect.size(); n++) {
-			if (g_btnConnect[n]->id - ID_BTN_CONNECT == connection_index) {
-				g_btnConnect[n]->checked = true;
+		g_btnSelectChannels->setEnable(true);
+		g_btnReorderChannels->setEnable(true);
+		g_btnChannelWidth->setEnable(true);
+		g_btnMix->setEnable(true);
+		g_selectedMixBus = "MIX";
+		g_btnMuteAll->setEnable(true);
+
+		for (size_t n = 0; n < g_btnConnect.size(); n++) {
+			if (g_btnConnect[n]->getId() - ID_BTN_CONNECT == connection_index) {
+				g_btnConnect[n]->setCheck(true);
 				break;
 			}
 		}
 
-		g_ua_server_last_connection = connection_index;
-
 		g_msg = "";
 
-		SetNetworkTimeout();
+		setNetworkTimeout();
 
-		SetRedrawWindow(true);
+		setRedrawWindow(true);
 	}
-	catch (string error)
-	{
-		g_msg = "Connection failed on " + g_ua_server_list[connection_index] + ":" + UA_TCP_PORT + ": " + string(error);
+	catch (const invalid_argument &error) {
+		g_msg = "Connection failed on " + serverListGet(connection_index) + ":" + UA_TCP_PORT + ": " + error.what();
+		writeLog(LOG_ERROR, "UA:  " + g_msg);
+		disconnect();
 
-		toLog("UA:  " + g_msg);
-
-		Disconnect();
+		// try to reconnect
+		if (g_settings.reconnect_time && g_timer_network_reconnect == 0) {
+			g_timer_network_reconnect = SDL_AddTimer(g_settings.reconnect_time, timerCallbackReconnect, NULL);
+		}
 
 		return false;
 	}
 	return true;
 }
-#endif
 
-void Disconnect()
+void disconnect()
 {
 	if (g_timer_network_timeout != 0) {
 		SDL_RemoveTimer(g_timer_network_timeout);
+		g_timer_network_timeout = 0;
+	}
+	if (g_timerFlipPage != 0) {
+		SDL_RemoveTimer(g_timerFlipPage);
+		g_timerFlipPage = 0;
 	}
 
-	g_btnSelectChannels->enabled=false;
-	g_btnChannelWidth->enabled=false;
-	g_btnPageLeft->enabled=false;
-	g_btnPageRight->enabled=false;
-	g_btnMix->enabled=false;
+	g_btnSelectChannels->setEnable(false);
+	g_btnReorderChannels->setEnable(false);
+	g_btnChannelWidth->setEnable(false);
+	g_btnPageLeft->setEnable(false);
+	g_btnPageRight->setEnable(false);
+	g_btnMix->setEnable(false);
+	g_btnPostFaderMeter->setEnable(false);
+	SDL_RemoveTimer(g_timerReenableMuteAll);
+	g_btnMuteAll->setEnable(false);
+	g_btnSimulation->setCheck(false);
+	g_btnSimulation->setVisible(false);
 
-	SaveServerSettings(g_ua_server_connected);
+	saveServerSettings(g_ua_server_connected);
 
-	if (g_tcpClient)
-	{
-		toLog("UA:  Disconnect from " + g_ua_server_connected + ":" + UA_TCP_PORT);
-
+	if (g_tcpClient) {
+		writeLog(LOG_INFO, "UA:  Disconnect from " + g_ua_server_connected + ":" + UA_TCP_PORT);
 		delete g_tcpClient;
 		g_tcpClient = NULL;
 	}
 
 	g_ua_server_connected = "";
+	cleanUpSendButtons();
+	cleanUpUADevices();
 
-	CleanUpSendButtons();
-
-	for (int n = 0; n < MAX_UA_DEVICES; n++)
-	{
-		if (g_ua_devices[n].ua_id.length())
-		{
-			g_ua_devices[n].Release();
-		}
+	for (size_t n = 0; n < g_btnConnect.size(); n++) {
+		g_btnConnect[n]->setCheck(false);
 	}
 
-	for (int n = 0; n < g_btnConnect.size(); n++)
-	{
-		g_btnConnect[n]->checked=false;
-	}
-
-	g_btnMix->checked=true;
-
-	SetRedrawWindow(true);
+	g_btnMix->setCheck(true);
+	setRedrawWindow(true);
 }
 
-string GetCheckedConnectionButton()
-{
-	for (int n = 0; n < g_btnConnect.size(); n++)
-	{
-		if (g_btnConnect[n]->checked)
-		{
-			return g_btnConnect[n]->text;
+string getCheckedConnectionButton() {
+	for (size_t n = 0; n < g_btnConnect.size(); n++) {
+		if (g_btnConnect[n]->isHighlighted()) {
+			return g_btnConnect[n]->getText();
 		}
 	}
 	return "";
 }
 
-void OnTouchDown(Vector2D *mouse_pt, SDL_TouchFingerEvent *touchinput)
+void onTouchDown(Vector2D *mouse_pt, SDL_TouchFingerEvent *touchinput)
 {
-	Vector2D pos_pt = { -1,-1 };
+	Vector2D pos_pt(0, 0);
 
 	if (touchinput)
 	{
 		int w,h;
 		SDL_GetWindowSize(g_window, &w, &h);
-		pos_pt.setX(touchinput->x * w); //touchpoint ist normalisiert
-		pos_pt.setY(touchinput->y * h);
+		pos_pt.setX(touchinput->x * (float)w); //touchpoint ist normalisiert
+		pos_pt.setY(touchinput->y * (float)h);
 	}
 	else if (mouse_pt)
 	{
 		pos_pt = *mouse_pt;
 	}
+	else {
+		return;
+	}
 
-	ChannelIndex channelIndex = GetChannelIdByPosition(pos_pt);
-	if (channelIndex.IsValid())
+	Channel *channel = getChannelByPosition(pos_pt);
+	if (channel && channel->touch_point.id == 0 && !channel->touch_point.is_mouse)
 	{
-		Channel *channel = GetChannelPtr(&channelIndex);
-		if (channel && channel->touch_point.id == 0 && !channel->touch_point.is_mouse)
+		Vector2D relative_pos_pt = pos_pt;
+		relative_pos_pt.subtractX(g_channel_offset_x);
+		relative_pos_pt.setX(fmodf(relative_pos_pt.getX(), g_channel_width));
+		relative_pos_pt.subtractY(g_channel_offset_y);
+
+		Module* module = channel->getModule(g_selectedMixBus);
+
+		if (g_btnSelectChannels->isHighlighted()) {
+			if (touchinput) {
+				channel->touch_point.id = touchinput->touchId;
+				channel->touch_point.finger_id = touchinput->fingerId;
+			}
+			else {
+				channel->touch_point.is_mouse = true;
+			}
+
+			channel->touch_point.action = TOUCH_ACTION_SELECT;
+			channel->selected_to_show = !channel->selected_to_show;
+
+			if (channel->isOverriddenShow())
+				channel->selected_to_show = true;
+			else if (channel->isOverriddenHide())
+				channel->selected_to_show = false;
+
+			g_touchpointChannels.insert(channel);
+
+			setRedrawWindow(true);
+		}
+		else if (g_btnReorderChannels->isHighlighted())
 		{
-			Vector2D relative_pos_pt = pos_pt;
-			relative_pos_pt.subtractX(g_channel_offset_x);
-			relative_pos_pt.setX((int)relative_pos_pt.getX() % (int)g_channel_width);
-			relative_pos_pt.subtractY(g_channel_offset_y);
-
-			if (g_btnSelectChannels->checked)
-			{
-				if (touchinput)
-				{
-					channel->touch_point.id = touchinput->touchId;
-					channel->touch_point.finger_id = touchinput->fingerId;
-				}
-				else
-					channel->touch_point.is_mouse = true;
-
-				channel->touch_point.action = TOUCH_ACTION_SELECT;
-				channel->selected_to_show = !channel->selected_to_show;
-
-				//override als selected, wenn name mit ! beginnt
-				if (channel->IsOverriddenShow())
-					channel->selected_to_show = true;
-				//override als nicht selected, wenn name mit # endet
-				else if (channel->IsOverriddenHide())
-					channel->selected_to_show = false;
-
-				SetRedrawWindow(true);
-			}
-			else if (channel->IsTouchOnPan(&relative_pos_pt))
-			{
+			if (!g_reorder_dragging) {
+				g_reorder_dragging = true;
+				g_dragPageFlip = 0;
 				if (touchinput)
 				{
 					channel->touch_point.id = touchinput->touchId;
 					channel->touch_point.finger_id = touchinput->fingerId;
 					channel->touch_point.pt_start_x = pos_pt.getX();
 					channel->touch_point.pt_start_y = pos_pt.getY();
-					channel->touch_point.action = TOUCH_ACTION_PAN;
-				}
-				else if(mouse_pt)
-				{
-					channel->touch_point.is_mouse = true;
-					channel->touch_point.pt_start_x = mouse_pt->getX();
-					channel->touch_point.pt_start_y = mouse_pt->getY();
-					channel->touch_point.action = TOUCH_ACTION_PAN;
-				}
-			}
-			else if (channel->IsTouchOnPan2(&relative_pos_pt))
-			{
-				if (touchinput)
-				{
-					channel->touch_point.id = touchinput->touchId;
-					channel->touch_point.finger_id = touchinput->fingerId;
-					channel->touch_point.pt_start_x = pos_pt.getX();
-					channel->touch_point.pt_start_y = pos_pt.getY();
-					channel->touch_point.action = TOUCH_ACTION_PAN2;
 				}
 				else if (mouse_pt)
 				{
 					channel->touch_point.is_mouse = true;
 					channel->touch_point.pt_start_x = mouse_pt->getX();
 					channel->touch_point.pt_start_y = mouse_pt->getY();
-					channel->touch_point.action = TOUCH_ACTION_PAN2;
 				}
-			}
-			else if (channel->IsTouchOnMute(&relative_pos_pt))
-			{
-				if (touchinput)
-				{
-					channel->touch_point.id = touchinput->touchId;
-					channel->touch_point.finger_id = touchinput->fingerId;
-				}
-				else
-					channel->touch_point.is_mouse = true;
-				channel->touch_point.action = TOUCH_ACTION_MUTE;
+				channel->touch_point.pt_end_x = channel->touch_point.pt_start_x;
+				channel->touch_point.pt_end_y = channel->touch_point.pt_start_y;
+				channel->touch_point.action = TOUCH_ACTION_REORDER;
 
-				if (g_btnMix->checked)
-				{
-					if (channel->fader_group)
-					{
-						int state = (int)!channel->mute;
-						for (int i = 0; i < MAX_UA_DEVICES; i++)
-						{
-							if (g_ua_devices[i].ua_id.length() && g_ua_devices[i].inputs)
-							{
-								for (int n = 0; n < g_ua_devices[i].inputsCount; n++)
-								{
-									if (g_ua_devices[i].inputs[n].ua_id.length() && !g_ua_devices[i].inputs[n].hidden && g_ua_devices[i].inputs[n].selected_to_show)
-									{
-										if (g_ua_devices[i].inputs[n].fader_group == channel->fader_group)
-										{
-											g_ua_devices[i].inputs[n].PressMute(state);
-											SetRedrawWindow(true);
-										}
-									}
-								}
-							}
-						}
-					}
-					else
-					{
-						channel->PressMute();
-						SetRedrawWindow(true);
-					}
-				}
-				else
-				{
-					for (int v = 0; v < g_btnSends.size(); v++)
-					{
-						if (g_btnSends[v]->checked)
-						{
-							if (channel->fader_group)
-							{
-								int state = (int)!channel->sends[v].bypass;
-								for (int i = 0; i < MAX_UA_DEVICES; i++)
-								{
-									if (g_ua_devices[i].ua_id.length() && g_ua_devices[i].inputs)
-									{
-										for (int n = 0; n < g_ua_devices[i].inputsCount; n++)
-										{
-											if (g_ua_devices[i].inputs[n].ua_id.length() && !g_ua_devices[i].inputs[n].hidden && g_ua_devices[i].inputs[n].selected_to_show)
-											{
-												if (g_ua_devices[i].inputs[n].fader_group == channel->fader_group)
-												{
-													g_ua_devices[i].inputs[n].sends[v].PressBypass(state);
-													SetRedrawWindow(true);
-												}
-											}
-										}
-									}
-								}
-							}
-							else
-							{
-								channel->sends[v].PressBypass();
-								SetRedrawWindow(true);
-							}
-							break;
+				g_touchpointChannels.insert(channel);
+			}
+		}
+		else if (channel->isTouchOnPan(&relative_pos_pt) && channel->type == INPUT)
+		{
+			if (touchinput)
+			{
+				channel->touch_point.id = touchinput->touchId;
+				channel->touch_point.finger_id = touchinput->fingerId;
+				channel->touch_point.pt_start_x = pos_pt.getX();
+				channel->touch_point.pt_start_y = pos_pt.getY();
+			}
+			else if(mouse_pt)
+			{
+				channel->touch_point.is_mouse = true;
+				channel->touch_point.pt_start_x = mouse_pt->getX();
+				channel->touch_point.pt_start_y = mouse_pt->getY();
+			}
+			channel->touch_point.pt_end_x = channel->touch_point.pt_start_x;
+			channel->touch_point.pt_end_y = channel->touch_point.pt_start_y;
+			channel->touch_point.action = TOUCH_ACTION_PAN;
+
+			g_touchpointChannels.insert(channel);
+
+			channel->updateSubscription(false, PAN);
+		}
+		else if (channel->isTouchOnPan2(&relative_pos_pt) && channel->type == INPUT)
+		{
+			if (touchinput)
+			{
+				channel->touch_point.id = touchinput->touchId;
+				channel->touch_point.finger_id = touchinput->fingerId;
+				channel->touch_point.pt_start_x = pos_pt.getX();
+				channel->touch_point.pt_start_y = pos_pt.getY();
+			}
+			else if (mouse_pt)
+			{
+				channel->touch_point.is_mouse = true;
+				channel->touch_point.pt_start_x = mouse_pt->getX();
+				channel->touch_point.pt_start_y = mouse_pt->getY();
+			}
+			channel->touch_point.pt_end_x = channel->touch_point.pt_start_x;
+			channel->touch_point.pt_end_y = channel->touch_point.pt_start_y;
+			channel->touch_point.action = TOUCH_ACTION_PAN2;
+
+			g_touchpointChannels.insert(channel);
+
+			channel->updateSubscription(false, PAN);
+		}
+		else if (channel->isTouchOnMute(&relative_pos_pt))
+		{
+			if (touchinput)
+			{
+				channel->touch_point.id = touchinput->touchId;
+				channel->touch_point.finger_id = touchinput->fingerId;
+			}
+			else
+				channel->touch_point.is_mouse = true;
+			channel->touch_point.action = TOUCH_ACTION_MUTE;
+
+			if (channel->fader_group) {
+				int state = (int)!module->mute;
+				for (unordered_map<string, Channel*>::iterator it = g_channelsById.begin(); it != g_channelsById.end(); ++it) {
+					if (it->second->isVisible(false)) {
+						if (it->second->fader_group == channel->fader_group) {
+							Module* moduleGroup = it->second->getModule(g_selectedMixBus);
+							moduleGroup->pressMute(state);
 						}
 					}
 				}
 			}
-			else if (channel->IsTouchOnSolo(&relative_pos_pt))
-			{
+			else {
+				module->pressMute();
+			}
+			setRedrawWindow(true);
+			g_touchpointChannels.insert(channel);
+		}
+		else if (channel->isTouchOnSolo(&relative_pos_pt) && channel->type == INPUT)
+		{
+			if (g_selectedMixBus == "MIX") {
 				if(touchinput)
 				{
 					channel->touch_point.id = touchinput->touchId;
@@ -2919,57 +3442,27 @@ void OnTouchDown(Vector2D *mouse_pt, SDL_TouchFingerEvent *touchinput)
 				else
 					channel->touch_point.is_mouse = true;
 				channel->touch_point.action = TOUCH_ACTION_SOLO;
-
-				if (g_btnMix->checked)
-				{
-					if (channel->fader_group)
-					{
-						int state = (int)!channel->solo;
-						for (int i = 0; i < MAX_UA_DEVICES; i++)
-						{
-							if (g_ua_devices[i].ua_id.length() && g_ua_devices[i].inputs)
-							{
-								for (int n = 0; n < g_ua_devices[i].inputsCount; n++)
-								{
-									if (g_ua_devices[i].inputs[n].ua_id.length() && !g_ua_devices[i].inputs[n].hidden && g_ua_devices[i].inputs[n].selected_to_show)
-									{
-										if (g_ua_devices[i].inputs[n].fader_group == channel->fader_group)
-										{
-											g_ua_devices[i].inputs[n].PressSolo(state);
-											SetRedrawWindow(true);
-										}
-									}
-								}
+			
+				if (channel->fader_group) {
+					int state = (int)!channel->solo;
+					for (unordered_map<string, Channel*>::iterator it = g_channelsById.begin(); it != g_channelsById.end(); ++it) {
+						if (it->second->isVisible(false)) {
+							if (it->second->fader_group == channel->fader_group) {
+								it->second->pressSolo(state);
 							}
 						}
 					}
-					else
-					{
-						channel->PressSolo();
-						SetRedrawWindow(true);
-					}
 				}
+				else {
+					channel->pressSolo();
+				}
+				setRedrawWindow(true);
+				g_touchpointChannels.insert(channel);
 			}
-			else if (channel->IsTouchOnGroup1(&relative_pos_pt))
-			{
-				if (touchinput)
-				{
-					channel->touch_point.id = touchinput->touchId;
-					channel->touch_point.finger_id = touchinput->fingerId;
-				}	
-				else
-					channel->touch_point.is_mouse = true;
-				channel->touch_point.action = TOUCH_ACTION_GROUP;
-
-				if (channel->fader_group == 1)
-					channel->fader_group = 0;
-				else
-					channel->fader_group = 1;
-
-				SetRedrawWindow(true);
-			}
-			else if (channel->IsTouchOnGroup2(&relative_pos_pt))
-			{
+		}
+		else if (channel->isTouchOnPostFader(&relative_pos_pt) && channel->type == AUX)
+		{
+			if (g_selectedMixBus == "MIX") {
 				if (touchinput)
 				{
 					channel->touch_point.id = touchinput->touchId;
@@ -2977,644 +3470,1099 @@ void OnTouchDown(Vector2D *mouse_pt, SDL_TouchFingerEvent *touchinput)
 				}
 				else
 					channel->touch_point.is_mouse = true;
-				channel->touch_point.action = TOUCH_ACTION_GROUP;
+				channel->touch_point.action = TOUCH_ACTION_POST_FADER;
 
-				if (channel->fader_group == 2)
-					channel->fader_group = 0;
-				else
-					channel->fader_group = 2;
-
-				SetRedrawWindow(true);
-			}
-			else if (channel->IsTouchOnFader(&relative_pos_pt))
-			{
-			/*	string root = "unsubscribe /devices/" + channel->device->ua_id + "/inputs/" + channel->ua_id;
-				string cmd = root + "/FaderLevel";
-				UA_TCPClientSend(cmd.c_str());*/
-
-				if (channel->fader_group)
-				{
-					for (int i = 0; i < MAX_UA_DEVICES; i++)
-					{
-						if (g_ua_devices[i].ua_id.length() && g_ua_devices[i].inputs)
-						{
-							for (int n = 0; n < g_ua_devices[i].inputsCount; n++)
-							{
-								if (g_ua_devices[i].inputs[n].ua_id.length() && !g_ua_devices[i].inputs[n].hidden && g_ua_devices[i].inputs[n].selected_to_show)
-								{
-									if (g_ua_devices[i].inputs[n].fader_group == channel->fader_group)
-									{
-										if (touchinput)
-										{
-											g_ua_devices[i].inputs[n].touch_point.id = touchinput->touchId;
-											g_ua_devices[i].inputs[n].touch_point.finger_id = touchinput->fingerId;
-											g_ua_devices[i].inputs[n].touch_point.pt_start_x = pos_pt.getX();
-											g_ua_devices[i].inputs[n].touch_point.pt_start_y = pos_pt.getY();
-											g_ua_devices[i].inputs[n].touch_point.action = TOUCH_ACTION_LEVEL;
-										}
-										else if (mouse_pt)
-										{
-											g_ua_devices[i].inputs[n].touch_point.is_mouse = true;
-											g_ua_devices[i].inputs[n].touch_point.pt_start_x = mouse_pt->getX();
-											g_ua_devices[i].inputs[n].touch_point.pt_start_y = mouse_pt->getY();
-											g_ua_devices[i].inputs[n].touch_point.action = TOUCH_ACTION_LEVEL;
-										}
-									}
-								}
+				if (channel->fader_group) {
+					int state = (int)!channel->post_fader;
+					for (unordered_map<string, Channel*>::iterator it = g_channelsById.begin(); it != g_channelsById.end(); ++it) {
+						if (it->second->isVisible(false)) {
+							if (it->second->fader_group == channel->fader_group) {
+								it->second->pressPostFader(state);
 							}
 						}
 					}
 				}
-				else
-				{
-					if (touchinput)
-					{
-						channel->touch_point.id = touchinput->touchId;
-						channel->touch_point.finger_id = touchinput->fingerId;
-						channel->touch_point.pt_start_x = pos_pt.getX();
-						channel->touch_point.pt_start_y = pos_pt.getY();
-						channel->touch_point.action = TOUCH_ACTION_LEVEL;
-					}
-					else if (mouse_pt)
-					{
-						channel->touch_point.is_mouse = true;
-						channel->touch_point.pt_start_x = mouse_pt->getX();
-						channel->touch_point.pt_start_y = mouse_pt->getY();
-						channel->touch_point.action = TOUCH_ACTION_LEVEL;
+				else {
+					channel->pressPostFader();
+				}
+				setRedrawWindow(true);
+				g_touchpointChannels.insert(channel);
+			}
+		}
+		else if (channel->isTouchOnGroup1(&relative_pos_pt) && channel->type != MASTER)
+		{
+			if (touchinput)
+			{
+				channel->touch_point.id = touchinput->touchId;
+				channel->touch_point.finger_id = touchinput->fingerId;
+			}	
+			else
+				channel->touch_point.is_mouse = true;
+			channel->touch_point.action = TOUCH_ACTION_GROUP;
+
+			if (channel->fader_group == 1)
+				channel->fader_group = 0;
+			else
+				channel->fader_group = 1;
+			g_touchpointChannels.insert(channel);
+			setRedrawWindow(true);
+		}
+		else if (channel->isTouchOnGroup2(&relative_pos_pt) && channel->type != MASTER)
+		{
+			if (touchinput)
+			{
+				channel->touch_point.id = touchinput->touchId;
+				channel->touch_point.finger_id = touchinput->fingerId;
+			}
+			else
+				channel->touch_point.is_mouse = true;
+			channel->touch_point.action = TOUCH_ACTION_GROUP;
+
+			if (channel->fader_group == 2)
+				channel->fader_group = 0;
+			else
+				channel->fader_group = 2;
+			g_touchpointChannels.insert(channel);
+			setRedrawWindow(true);
+		}
+		else if (channel->isTouchOnFader(&relative_pos_pt)) {
+			if (channel->fader_group) {
+				for (unordered_map<string, Channel*>::iterator it = g_channelsById.begin(); it != g_channelsById.end(); ++it) {
+					if (it->second->isVisible(true)) {
+						if (it->second->fader_group == channel->fader_group) {
+							it->second->updateSubscription(false, LEVEL);
+							it->second->touch_point.action = TOUCH_ACTION_LEVEL;
+						}
 					}
 				}
 			}
+			else {
+				channel->updateSubscription(false, LEVEL);
+			}
+
+			if (touchinput)
+			{
+				channel->touch_point.id = touchinput->touchId;
+				channel->touch_point.finger_id = touchinput->fingerId;
+				channel->touch_point.pt_start_x = pos_pt.getX();
+				channel->touch_point.pt_start_y = pos_pt.getY();
+			}
+			else if (mouse_pt)
+			{
+				channel->touch_point.is_mouse = true;
+				channel->touch_point.pt_start_x = mouse_pt->getX();
+				channel->touch_point.pt_start_y = mouse_pt->getY();
+			}
+			channel->touch_point.pt_end_x = channel->touch_point.pt_start_x;
+			channel->touch_point.pt_end_y = channel->touch_point.pt_start_y;
+			channel->touch_point.action = TOUCH_ACTION_LEVEL;
+			g_touchpointChannels.insert(channel);
 		}
 	}
 }
 
-void OnTouchDrag(Vector2D *mouse_pt, SDL_TouchFingerEvent *touchinput)
+void onTouchDrag(Vector2D *mouse_pt, SDL_TouchFingerEvent *touchinput)
 {
-	ChannelIndex channelIndex = { -1, -1 };
+	Channel* channel = NULL;
 
 	if (touchinput)
-		channelIndex = GetChannelIdByTouchpointId(false, touchinput);
+		channel = getChannelByTouchpointId(false, touchinput);
 	else
-		channelIndex = GetChannelIdByTouchpointId((bool)mouse_pt, NULL);
+		channel = getChannelByTouchpointId((bool)mouse_pt, NULL);
 
-	if (channelIndex.IsValid())
+	if (channel && ( (mouse_pt && channel->touch_point.is_mouse) || (touchinput  && channel->touch_point.id) ))
 	{
-		Channel *channel = GetChannelPtr(&channelIndex);
-		if (channel && ( (mouse_pt && channel->touch_point.is_mouse) || (touchinput  && channel->touch_point.id) ))
-		{
-			Vector2D pos_pt = { -1,-1 };
+		Vector2D pos_pt(0, 0);
+		Module* module = channel->getModule(g_selectedMixBus);
+		if (module) {
 
-			if (touchinput)
-			{
-				int w,h;
+			if (touchinput) {
+				int w, h;
 				SDL_GetWindowSize(g_window, &w, &h);
-				pos_pt.setX(touchinput->x * w); //touchpoint ist normalisiert
-				pos_pt.setY(touchinput->y * h);
+				pos_pt.setX(touchinput->x * (float)w); //touchpoint ist normalisiert
+				pos_pt.setY(touchinput->y * (float)h);
 			}
 			else if (mouse_pt) {
 				pos_pt = *mouse_pt;
 			}
-
-//			printf("Drag: touch:%s mouse:%s y: %d\n", touchinput ? "true" : "false", mouse_pt ? "true":"false", (int)pos_pt.getY());
+			else {
+				return;
+			}
 
 			channel->touch_point.pt_end_x = pos_pt.getX();
 			channel->touch_point.pt_end_y = pos_pt.getY();
 
-			if (channel->touch_point.action == TOUCH_ACTION_SELECT)
-			{
-				ChannelIndex hover_channelIndex = GetChannelIdByPosition(pos_pt);
-				if (hover_channelIndex.IsValid())
+			if (channel->touch_point.action == TOUCH_ACTION_SELECT) {
+				Channel* channelHover = getChannelByPosition(pos_pt);
+				if (channelHover && channelHover->touch_point.id == 0 && !channelHover->touch_point.is_mouse)
 				{
-					Channel *hover_channel = GetChannelPtr(&hover_channelIndex);
-					if (hover_channel && hover_channel->touch_point.id == 0 && !hover_channel->touch_point.is_mouse)
-					{
-						hover_channel->selected_to_show = channel->selected_to_show;
-						//override als selected, wenn name mit ! beginnt
-						if (hover_channel->IsOverriddenShow())
-							hover_channel->selected_to_show = true;
-						//override als nicht selected, wenn name mit # endet
-						else if (hover_channel->IsOverriddenHide())
-							hover_channel->selected_to_show = false;
-						SetRedrawWindow(true);
-					}
+					channelHover->selected_to_show = channel->selected_to_show;
+					//override als selected, wenn name mit ! beginnt
+					if (channelHover->isOverriddenShow())
+						channelHover->selected_to_show = true;
+					//override als nicht selected, wenn name mit # endet
+					else if (channelHover->isOverriddenHide())
+						channelHover->selected_to_show = false;
+					setRedrawWindow(true);
 				}
+			}
+			else if (channel->touch_point.action == TOUCH_ACTION_REORDER)
+			{
+				if (g_timerFlipPage == 0 &&
+					(channel->touch_point.pt_end_x < g_channel_offset_x ||
+						channel->touch_point.pt_end_x > g_channel_offset_x + (float)g_channels_per_page * g_channel_width)) {
+					g_timerFlipPage = SDL_AddTimer(800, timerCallbackFlipPage, channel);
+				}
+				setRedrawWindow(true);
 			}
 			else if (channel->touch_point.action == TOUCH_ACTION_MUTE)
 			{
-				ChannelIndex hover_channelIndex = GetChannelIdByPosition(pos_pt);
-				if (hover_channelIndex.IsValid())
-				{
-					Channel *hover_channel = GetChannelPtr(&hover_channelIndex);
-					if (hover_channel && hover_channel->touch_point.id == 0 && !hover_channel->touch_point.is_mouse)
-					{
-						Vector2D relative_pos_pt = pos_pt;
-						relative_pos_pt.subtractX(g_channel_offset_x);
-						relative_pos_pt.setX((int)relative_pos_pt.getX() % (int)g_channel_width);
-						relative_pos_pt.subtractY(g_channel_offset_y);
+				Channel* channelHover = getChannelByPosition(pos_pt);
+				if (channelHover && channelHover->touch_point.id == 0 && !channelHover->touch_point.is_mouse) {
+					Vector2D relative_pos_pt = pos_pt;
+					relative_pos_pt.subtractX(g_channel_offset_x);
+					relative_pos_pt.setX(fmodf(relative_pos_pt.getX(), g_channel_width));
+					relative_pos_pt.subtractY(g_channel_offset_y);
 
-						if (hover_channel->IsTouchOnMute(&relative_pos_pt))
-						{
-							if (g_btnMix->checked)
-							{
-								if (hover_channel->fader_group)
-								{
-									int state = (int)channel->mute;
-									for (int i = 0; i < MAX_UA_DEVICES; i++)
-									{
-										if (g_ua_devices[i].ua_id.length() && g_ua_devices[i].inputs)
-										{
-											for (int n = 0; n < g_ua_devices[i].inputsCount; n++)
-											{
-												if (g_ua_devices[i].inputs[n].ua_id.length() && !g_ua_devices[i].inputs[n].hidden && g_ua_devices[i].inputs[n].selected_to_show)
-												{
-													if (g_ua_devices[i].inputs[n].fader_group == hover_channel->fader_group)
-													{
-														if (g_ua_devices[i].inputs[n].mute != (bool)state)
-														{
-															g_ua_devices[i].inputs[n].PressMute(state);
-															SetRedrawWindow(true);
-														}
-													}
-												}
+					if (channelHover->isTouchOnMute(&relative_pos_pt)) {
+						Module* moduleHover = channelHover->getModule(g_selectedMixBus);
+						if (moduleHover) {
+							if (channelHover->fader_group) {
+								int state = (int)module->mute;
+								for (unordered_map<string, Channel*>::iterator it = g_channelsById.begin(); it != g_channelsById.end(); ++it) {
+									if (it->second->isVisible(false)) {
+										if (it->second->fader_group == channelHover->fader_group) {
+											Module* moduleGroup = it->second->getModule(g_selectedMixBus);
+											if (moduleGroup && moduleGroup->mute != (bool)state) {
+												moduleGroup->pressMute(state);
 											}
 										}
-									}
-								}
-								else
-								{
-									if (hover_channel->mute != channel->mute)
-									{
-										hover_channel->PressMute(channel->mute);
-										SetRedrawWindow(true);
 									}
 								}
 							}
-							else
-							{
-								for (int v = 0; v < g_btnSends.size(); v++)
-								{
-									if (g_btnSends[v]->checked)
-									{
-										if (hover_channel->fader_group)
-										{
-											int state = (int)channel->sends[v].bypass;
-											for (int i = 0; i < MAX_UA_DEVICES; i++)
-											{
-												if (g_ua_devices[i].ua_id.length() && g_ua_devices[i].inputs)
-												{
-													for (int n = 0; n < g_ua_devices[i].inputsCount; n++)
-													{
-														if (g_ua_devices[i].inputs[n].ua_id.length() && !g_ua_devices[i].inputs[n].hidden && g_ua_devices[i].inputs[n].selected_to_show)
-														{
-															if (g_ua_devices[i].inputs[n].fader_group == hover_channel->fader_group)
-															{
-																if (g_ua_devices[i].inputs[n].sends[v].bypass != (bool)state)
-																{
-																	g_ua_devices[i].inputs[n].sends[v].PressBypass(state);
-																	SetRedrawWindow(true);
-																}
-															}
-														}
-													}
-												}
-											}
-										}
-										else
-										{
-											if (hover_channel->sends[v].bypass != channel->sends[v].bypass)
-											{
-												hover_channel->sends[v].PressBypass(channel->sends[v].bypass);
-												SetRedrawWindow(true);
-											}
-										}
-										break;
-									}
+							else {
+								if (moduleHover->mute != module->mute) {
+									moduleHover->pressMute(module->mute);
 								}
 							}
+							setRedrawWindow(true);
 						}
 					}
 				}
 			}
-			else if (channel->touch_point.action == TOUCH_ACTION_SOLO)
-			{
-				ChannelIndex hover_channelIndex = GetChannelIdByPosition(pos_pt);
-				if (hover_channelIndex.IsValid())
-				{
-					Channel *hover_channel = GetChannelPtr(&hover_channelIndex);
-					if (hover_channel && hover_channel->touch_point.id == 0 && !hover_channel->touch_point.is_mouse)
-					{
-						Vector2D relative_pos_pt = pos_pt;
-						relative_pos_pt.subtractX(g_channel_offset_x);
-						relative_pos_pt.setX((int)relative_pos_pt.getX() % (int)g_channel_width);
-						relative_pos_pt.subtractY(g_channel_offset_y);
+			else if (channel->touch_point.action == TOUCH_ACTION_SOLO) {
+				Channel* channelHover = getChannelByPosition(pos_pt);
+				if (channelHover && channelHover->touch_point.id == 0 && !channelHover->touch_point.is_mouse && channelHover->type == INPUT) {
+					Vector2D relative_pos_pt = pos_pt;
+					relative_pos_pt.subtractX(g_channel_offset_x);
+					relative_pos_pt.setX(fmodf(relative_pos_pt.getX(), g_channel_width));
+					relative_pos_pt.subtractY(g_channel_offset_y);
 
-						if (hover_channel->IsTouchOnSolo(&relative_pos_pt))
-						{
-							if (g_btnMix->checked)
-							{
-								if (hover_channel->fader_group)
-								{
-									int state = (int)channel->solo;
-									for (int i = 0; i < MAX_UA_DEVICES; i++)
-									{
-										if (g_ua_devices[i].ua_id.length() && g_ua_devices[i].inputs)
-										{
-											for (int n = 0; n < g_ua_devices[i].inputsCount; n++)
-											{
-												if (g_ua_devices[i].inputs[n].ua_id.length() && !g_ua_devices[i].inputs[n].hidden && g_ua_devices[i].inputs[n].selected_to_show)
-												{
-													if (g_ua_devices[i].inputs[n].fader_group == hover_channel->fader_group)
-													{
-														if (g_ua_devices[i].inputs[n].solo != (bool)state)
-														{
-															g_ua_devices[i].inputs[n].PressSolo(state);
-															SetRedrawWindow(true);
-														}
-													}
-												}
-											}
+					if (channelHover->isTouchOnSolo(&relative_pos_pt)) {
+						if (channelHover->fader_group) {
+							int state = (int)channel->solo;
+							for (unordered_map<string, Channel*>::iterator it = g_channelsById.begin(); it != g_channelsById.end(); ++it) {
+								if (it->second->isVisible(false)) {
+									if (it->second->fader_group == channelHover->fader_group) {
+										if (it->second->solo != (bool)state) {
+											it->second->pressSolo(state);
 										}
 									}
 								}
-								else
-								{
-									if (hover_channel->solo != channel->solo)
-									{
-										hover_channel->PressSolo(channel->solo);
-										SetRedrawWindow(true);
+							}
+						}
+						else {
+							if (channelHover->solo != channel->solo) {
+								channelHover->pressSolo(channel->solo);
+							}
+						}
+						setRedrawWindow(true);
+					}
+				}
+			}
+			else if (channel->touch_point.action == TOUCH_ACTION_POST_FADER) {
+				Channel* channelHover = getChannelByPosition(pos_pt);
+				if (channelHover && channelHover->touch_point.id == 0 && !channelHover->touch_point.is_mouse && channelHover->type == AUX) {
+					Vector2D relative_pos_pt = pos_pt;
+					relative_pos_pt.subtractX(g_channel_offset_x);
+					relative_pos_pt.setX(fmodf(relative_pos_pt.getX(), g_channel_width));
+					relative_pos_pt.subtractY(g_channel_offset_y);
+
+					if (channelHover->isTouchOnPostFader(&relative_pos_pt)) {
+						if (channelHover->fader_group) {
+							int state = (int)channel->post_fader;
+							for (unordered_map<string, Channel*>::iterator it = g_channelsById.begin(); it != g_channelsById.end(); ++it) {
+								if (it->second->isVisible(false)) {
+									if (it->second->fader_group == channelHover->fader_group) {
+										if (it->second->post_fader != (bool)state) {
+											it->second->pressPostFader(state);
+										}
 									}
 								}
 							}
 						}
+						else {
+							if (channelHover->post_fader != channel->post_fader) {
+								channelHover->pressPostFader(channel->post_fader);
+							}
+						}
+						setRedrawWindow(true);
 					}
 				}
 			}
-			else if (channel->touch_point.action == TOUCH_ACTION_GROUP)
-			{
-				ChannelIndex hover_channelIndex = GetChannelIdByPosition(pos_pt);
-				if (hover_channelIndex.IsValid())
-				{
-					Channel *hover_channel = GetChannelPtr(&hover_channelIndex);
-					if (hover_channel && hover_channel->touch_point.id == 0 && !hover_channel->touch_point.is_mouse)
-					{
-						Vector2D relative_pos_pt = pos_pt;
-						relative_pos_pt.subtractX(g_channel_offset_x);
-						relative_pos_pt.setX((int)relative_pos_pt.getX() % (int)g_channel_width);
-						relative_pos_pt.subtractY(g_channel_offset_y);
+			else if (channel->touch_point.action == TOUCH_ACTION_GROUP) {
+				Channel* channelHover = getChannelByPosition(pos_pt);
 
-						if (hover_channel->IsTouchOnGroup1(&relative_pos_pt)
-							|| hover_channel->IsTouchOnGroup2(&relative_pos_pt))
+				if (channelHover && channelHover->touch_point.id == 0 && !channelHover->touch_point.is_mouse && channelHover->type != MASTER) {
+					Vector2D relative_pos_pt = pos_pt;
+					relative_pos_pt.subtractX(g_channel_offset_x);
+					relative_pos_pt.setX(fmodf(relative_pos_pt.getX(), g_channel_width));
+					relative_pos_pt.subtractY(g_channel_offset_y);
+
+					if (channelHover->isTouchOnGroup1(&relative_pos_pt)
+						|| channelHover->isTouchOnGroup2(&relative_pos_pt)) {
+						if (channelHover->fader_group != channel->fader_group)
 						{
-						//	if (Button_GetCheck(g_hwndBtnMix) == BST_CHECKED)
-							{
-								if (hover_channel->fader_group != channel->fader_group)
-								{
-									hover_channel->fader_group=channel->fader_group;
-									SetRedrawWindow(true);
-								}
-							}
+							channelHover->fader_group = channel->fader_group;
+							setRedrawWindow(true);
 						}
 					}
 				}
 			}
-			else if (channel->touch_point.action == TOUCH_ACTION_PAN)
-			{
-				double pan_move = (double)(channel->touch_point.pt_end_x - channel->touch_point.pt_start_x) / g_channel_width;
+			else if (channel->touch_point.action == TOUCH_ACTION_PAN) {
+				double pan_move = (double)((channel->touch_point.pt_end_x - channel->touch_point.pt_start_x) / g_channel_width);
 
-				if (abs(pan_move) > UA_SENDVALUE_RESOLUTION)
-				{
+				if (abs(pan_move) > UA_SENDVALUE_RESOLUTION) {
+					channel->touch_point.pt_start_x = channel->touch_point.pt_end_x;
+					channel->touch_point.pt_start_y = channel->touch_point.pt_end_y;
+					module->changePan(pan_move);
+					setRedrawWindow(true);
+				}
+			}
+			else if (channel->touch_point.action == TOUCH_ACTION_PAN2) {
+				double pan_move = (double)((channel->touch_point.pt_end_x - channel->touch_point.pt_start_x) / g_channel_width);
+
+				if (abs(pan_move) > UA_SENDVALUE_RESOLUTION) {
+					channel->touch_point.pt_start_x = channel->touch_point.pt_end_x;
+					channel->touch_point.pt_start_y = channel->touch_point.pt_end_y;
+					module->changePan2(pan_move);
+					setRedrawWindow(true);
+				}
+			}
+			else if (channel->touch_point.action == TOUCH_ACTION_LEVEL) {
+				double fader_move = -(double)((channel->touch_point.pt_end_y - channel->touch_point.pt_start_y) / g_faderrail_height);
+
+				if (abs(fader_move) > UA_SENDVALUE_RESOLUTION) {
 					channel->touch_point.pt_start_x = channel->touch_point.pt_end_x;
 					channel->touch_point.pt_start_y = channel->touch_point.pt_end_y;
 
-					if (g_btnMix->checked)
-					{
-						channel->ChangePan(pan_move);
-					}
-					else
-					{
-						for (int n = 0; n < g_btnSends.size(); n++)
-						{
-							if (g_btnSends[n]->checked)
-							{
-								channel->sends[n].ChangePan(pan_move);
-								break;
-							}
-						}
-					}
-					SetRedrawWindow(true);
-				}
-			}
-			else if (channel->touch_point.action == TOUCH_ACTION_PAN2)
-			{
-				double pan_move = (double)(channel->touch_point.pt_end_x - channel->touch_point.pt_start_x) / g_channel_width;
+					if (channel->fader_group) {
+						double dbBefore = toDbFS(module->level);
+						double dbAfter = min(12.0, toDbFS(fromMeterScale(toMeterScale(module->level) + fader_move)));
+						dbAfter = max(-144.0, dbAfter);
+						double dBDif = dbAfter - dbBefore;
 
-				if (abs(pan_move) > UA_SENDVALUE_RESOLUTION)
-				{
-					channel->touch_point.pt_start_x = channel->touch_point.pt_end_x;
-					channel->touch_point.pt_start_y = channel->touch_point.pt_end_y;
-
-					if (g_btnMix->checked)
-					{
-						channel->ChangePan2(pan_move);
-						SetRedrawWindow(true);
-					}
-				}
-			}
-			else if (channel->touch_point.action == TOUCH_ACTION_LEVEL)
-			{
-				double fader_move = -(double)(channel->touch_point.pt_end_y - channel->touch_point.pt_start_y) / g_channel_slider_height;
-
-				if (abs(fader_move) > UA_SENDVALUE_RESOLUTION)
-				{
-					if (channel->fader_group)
-					{
-						for (int i = 0; i < MAX_UA_DEVICES; i++)
-						{
-							if (g_ua_devices[i].ua_id.length() && g_ua_devices[i].inputs)
-							{
-								for (int n = 0; n < g_ua_devices[i].inputsCount; n++)
-								{
-									if (g_ua_devices[i].inputs[n].ua_id.length() && !g_ua_devices[i].inputs[n].hidden && g_ua_devices[i].inputs[n].selected_to_show)
-									{
-										if (g_ua_devices[i].inputs[n].fader_group == channel->fader_group)
-										{
-											g_ua_devices[i].inputs[n].touch_point.pt_start_x = g_ua_devices[i].inputs[n].touch_point.pt_end_x;
-											g_ua_devices[i].inputs[n].touch_point.pt_start_y = g_ua_devices[i].inputs[n].touch_point.pt_end_y;
-
-											if (g_btnMix->checked)
-											{
-												g_ua_devices[i].inputs[n].ChangeLevel(fader_move);
-												SetRedrawWindow(true);
-											}
-											else
-											{
-												for (int v = 0; v < g_btnSends.size(); v++)
-												{
-													if (g_btnSends[v]->checked)
-													{
-														g_ua_devices[i].inputs[n].sends[v].ChangeGain(fader_move);
-														SetRedrawWindow(true);
-														break;
-													}
-												}
-											}
-										}
+						for (unordered_map<string, Channel*>::iterator it = g_channelsById.begin(); it != g_channelsById.end(); ++it) {
+							if (it->second->isVisible(false)) {
+								if (it->second->fader_group == channel->fader_group) {
+									Module* moduleGroup = it->second->getModule(g_selectedMixBus);
+									if (moduleGroup) {
+										double level = fromDbFS(toDbFS(moduleGroup->level) + dBDif);
+										moduleGroup->changeLevel(level, true);
 									}
 								}
 							}
 						}
 					}
-					else
-					{
-						channel->touch_point.pt_start_x = channel->touch_point.pt_end_x;
-						channel->touch_point.pt_start_y = channel->touch_point.pt_end_y;
-
-						if (g_btnMix->checked)
-						{
-							channel->ChangeLevel(fader_move);
-							SetRedrawWindow(true);
-						}
-						else
-						{
-							for (int n = 0; n < g_btnSends.size(); n++)
-							{
-								if (g_btnSends[n]->checked)
-								{
-									channel->sends[n].ChangeGain(fader_move);
-									SetRedrawWindow(true);
-									break;
-								}
-							}
-						}
+					else {
+						module->changeLevel(fader_move);
 					}
+					setRedrawWindow(true);
 				}
 			}
 		}
 	}
 }
 
-void OnTouchUp(bool is_mouse, SDL_TouchFingerEvent *touchinput)
+void onTouchUp(bool is_mouse, SDL_TouchFingerEvent *touchinput)
 {
-	ChannelIndex channelIndex = { -1, -1 };
+	Channel* channel = NULL;
 		
 	if (touchinput)
-		channelIndex = GetChannelIdByTouchpointId(false, touchinput);
+		channel = getChannelByTouchpointId(false, touchinput);
 	else
-		channelIndex = GetChannelIdByTouchpointId(is_mouse, 0);
+		channel = getChannelByTouchpointId(is_mouse, 0);
 
-	if (channelIndex.IsValid())
+	if (channel)
 	{
-		Channel *channel = GetChannelPtr(&channelIndex);
-		if (channel)
-		{
-			if (channel->fader_group)
-			{
-				for (int i = 0; i < MAX_UA_DEVICES; i++)
-				{
-					if (g_ua_devices[i].ua_id.length() && g_ua_devices[i].inputs)
-					{
-						for (int n = 0; n < g_ua_devices[i].inputsCount; n++)
-						{
-							if (g_ua_devices[i].inputs[n].ua_id.length() && !g_ua_devices[i].inputs[n].hidden && g_ua_devices[i].inputs[n].selected_to_show)
-							{
-								if (g_ua_devices[i].inputs[n].fader_group == channel->fader_group)
-								{
-									if (g_ua_devices[i].inputs[n].touch_point.action == TOUCH_ACTION_LEVEL)
-									{
-										string cmd = "subscribe /devices/" + g_ua_devices[i].inputs[n].device->ua_id + "/inputs/" 
-											+ g_ua_devices[i].inputs[n].ua_id + "/FaderLevel/";
-										UA_TCPClientSend(cmd.c_str());
-									}
-									if(touchinput)
-									{
-										g_ua_devices[i].inputs[n].touch_point.id = 0;
-										g_ua_devices[i].inputs[n].touch_point.finger_id = 0;
-									}
-									if(is_mouse)
-										g_ua_devices[i].inputs[n].touch_point.is_mouse = false;
+		if (channel->touch_point.action == TOUCH_ACTION_REORDER) {
 
-									g_ua_devices[i].inputs[n].touch_point.action = TOUCH_ACTION_NONE;
-								}
+			if (g_timerFlipPage != 0){
+				SDL_RemoveTimer(g_timerFlipPage);
+				g_timerFlipPage = 0;
+			}
+
+			float tpX = min(channel->touch_point.pt_end_x, g_channel_offset_x + g_channel_width * (float)g_channels_per_page);
+			tpX = max(tpX, g_channel_offset_x);
+			float fmove = (tpX - channel->touch_point.pt_start_x) / g_channel_width + (float)(g_dragPageFlip * g_channels_per_page);
+			int move = (int)(fmove > 0.0f ? floor(fmove) : ceil(fmove));
+
+			map<int, Channel*> channelsInOrderCopy;
+
+			int channelIndex = -1;
+			int invisibleChannels = 0;
+			if (move > 0) { // move right
+				int n = 0;
+				for (map<int, Channel*>::iterator it = g_channelsInOrder.begin(); it != g_channelsInOrder.end(); ++it) {
+					if (it->second == channel) {
+						channelIndex = n;
+					}
+					else {
+						if (channelIndex != -1) {
+							if (!it->second->isVisible(true)) {
+								invisibleChannels++;
 							}
+							else if (n == channelIndex + move + invisibleChannels) {
+								channelsInOrderCopy.insert({ n, channel });
+								channelIndex = -1;
+								n++;
+							}
+						}
+						channelsInOrderCopy.insert({ n, it->second });
+						n++;
+					}
+				}
+				if (channelIndex != -1) {
+					channelsInOrderCopy.insert({ channelsInOrderCopy.size(), channel });
+				}
+				g_channelsInOrder.swap(channelsInOrderCopy);
+			}
+			else if (move < 0) { // move left
+				int n = (int)g_channelsInOrder.size() - 1;
+				for (map<int, Channel*>::reverse_iterator it = g_channelsInOrder.rbegin(); it != g_channelsInOrder.rend(); ++it) {
+					if (it->second == channel) {
+						channelIndex = n;
+					}
+					else {
+						if (channelIndex != -1) {
+							if (!it->second->isVisible(true)) {
+								invisibleChannels++;
+							}
+							else if (n == channelIndex + move - invisibleChannels) {
+								channelsInOrderCopy.insert({ n, channel });
+								channelIndex = -1;
+								n--;
+							}
+						}
+						channelsInOrderCopy.insert({ n, it->second });
+						n--;
+					}
+				}
+				if (channelIndex != -1) {
+					channelsInOrderCopy.insert({ 0, channel });
+				}
+				g_channelsInOrder.swap(channelsInOrderCopy);
+			}
+
+			setRedrawWindow(true);
+
+			g_reorder_dragging = false;
+		}
+		else if (channel->touch_point.action == TOUCH_ACTION_LEVEL) {
+			if (channel->fader_group) {
+				for (unordered_map<string, Channel*>::iterator it = g_channelsById.begin(); it != g_channelsById.end(); ++it) {
+					if (it->second->isVisible(true)) {
+						if (it->second->fader_group == channel->fader_group) {
+							it->second->updateSubscription(true, LEVEL);
+							it->second->touch_point.action = TOUCH_ACTION_NONE;
 						}
 					}
 				}
 			}
-			else
-			{
-				if (channel->touch_point.action == TOUCH_ACTION_LEVEL)
-				{
-					string cmd = "subscribe /devices/" + channel->device->ua_id + "/inputs/" + channel->ua_id + "/FaderLevel/";
-					UA_TCPClientSend(cmd.c_str());
-				}
-				if(touchinput)
-				{
-					channel->touch_point.id = 0;
-					channel->touch_point.finger_id = 0;
-				}
-				if(is_mouse)
-					channel->touch_point.is_mouse = false;
-					
-				channel->touch_point.action = TOUCH_ACTION_NONE;
+			else {
+				channel->updateSubscription(true, LEVEL);
+			}
+		}
+		else if (channel->touch_point.action == TOUCH_ACTION_PAN || channel->touch_point.action == TOUCH_ACTION_PAN2) {
+			channel->updateSubscription(true, PAN);
+		}
+
+		if (touchinput) {
+			channel->touch_point.id = 0;
+			channel->touch_point.finger_id = 0;
+		}
+		if (is_mouse) {
+			channel->touch_point.is_mouse = false;
+		}
+
+		channel->touch_point.action = TOUCH_ACTION_NONE;
+
+		g_touchpointChannels.erase(channel);
+	}
+}
+
+void onStateChanged_btnSettings(Button *btn) {
+	if (btn->getState() == PRESSED) {
+		initSettingsDialog();
+	}
+	else if (btn->getState() == RELEASED) {
+		releaseSettingsDialog();
+	}
+}
+
+void muteChannels(bool mute, bool all) { // for unmute: all or previously muted
+	int* param = new int;
+	*param = 0;
+	if (mute) {
+		*param |= 0b01;
+	}
+	if (all) {
+		*param |= 0b10;
+	}
+	SDL_CreateThread(muteAllThread, "muteAllThread", (void*)param);
+}
+
+void onStateChanged_btnMuteAll(Button *btn) {
+	if (btn->getState() & PRESSED) {
+		if (!(btn->getState() & CHECKED)) {
+			btn->setEnable(false);
+			if (!g_timerReenableMuteAll) {
+				g_timerReenableMuteAll = SDL_AddTimer(getActiveChannelsCount(false) * MUTE_ALL_CHANNEL_INTERVAL, timerCallbackReenableMuteAll, NULL);
+			}
+			setRedrawWindow(true);
+			muteChannels(true, true);
+		}
+		else {
+			g_unmuteAllCountdown = 4;
+			if (!g_timerUnmuteAll) {
+				g_timerUnmuteAll = SDL_AddTimer(1000, timerCallbackUnmuteAll, NULL);
 			}
 		}
 	}
+	else if (btn->getState() == RELEASED) {
+		if (g_timerUnmuteAll) {
+			SDL_RemoveTimer(g_timerUnmuteAll);
+			g_timerUnmuteAll = 0;
+			g_unmuteAllCountdown = 0;
+			btn->setEnable(false);
+			if (!g_timerReenableMuteAll) {
+				g_timerReenableMuteAll = SDL_AddTimer(getActiveChannelsCount(false) * MUTE_ALL_CHANNEL_INTERVAL, timerCallbackReenableMuteAll, NULL);
+			}
+			setRedrawWindow(true);
+			muteChannels(false, false);
+		}
+	}
 }
 
-void UpdateLockToMixSetting(Button *btn) {
-	if(btn != g_btnLockToMixMIX)
-		g_btnLockToMixMIX->checked = false;
-	if (btn != g_btnLockToMixHP)
-		g_btnLockToMixHP->checked = false;
-	if (btn != g_btnLockToMixAUX1)
-		g_btnLockToMixAUX1->checked = false;
-	if (btn != g_btnLockToMixAUX2)
-		g_btnLockToMixAUX2->checked = false;
-	if (btn != g_btnLockToMixCUE1)
-		g_btnLockToMixCUE1->checked = false;
-	if (btn != g_btnLockToMixCUE2)
-		g_btnLockToMixCUE2->checked = false;
-	if (btn != g_btnLockToMixCUE3)
-		g_btnLockToMixCUE3->checked = false;
-	if (btn != g_btnLockToMixCUE4)
-		g_btnLockToMixCUE4->checked = false;
+void onStateChanged_btnSelectChannels(Button *btn) {
+	if (btn->getState() & PRESSED) {
+		if (!(btn->getState() & CHECKED)) {
+			g_btnReorderChannels->setCheck(false);
+			g_visibleChannelsCount = -1;
+			browseToSelectedChannel(g_browseToChannel);
+			updateMaxPages(false);
+			g_browseToChannel = getMiddleSelectedChannel();
+			pushEvent(EVENT_UPDATE_SUBSCRIPTIONS);
+		}
+		g_selectAllChannelsCountdown = 8;
+		if (!g_timerSelectAllChannels) {
+			g_timerSelectAllChannels = SDL_AddTimer(1000, timerCallbackSelectAllChannels, NULL);
+		}
+	}
+	else if (btn->getState() & RELEASED) {
 
-	btn->checked = !btn->checked;
+		if (!(btn->getState() & CHECKED)) {
+			if (g_selectAllChannelsCountdown < 5) { // dont switch when allselect/unselect happened
+				btn->setCheck(true);
+			}
+			else {
+				browseToSelectedChannel(g_browseToChannel);
+				g_visibleChannelsCount = -1;
+				updateMaxPages(true);
+				g_browseToChannel = getMiddleSelectedChannel();
+				pushEvent(EVENT_UPDATE_SUBSCRIPTIONS);
+			}
+		}
 
-	if (btn->checked) {
-		g_settings.lock_to_mix = btn->text;
+		SDL_RemoveTimer(g_timerSelectAllChannels);
+		g_timerSelectAllChannels = 0;
+		g_selectAllChannelsCountdown = 0;
+	}
+	g_visibleChannelsCount = -1;
+}
 
-		if (g_settings.lock_to_mix == "MIX") {
-			g_btnMix->enabled = true;
-			g_btnMix->checked = true;
+void onStateChanged_btnReorderChannels(Button *btn) {
+	if (btn->getState() & PRESSED) {
+		g_btnSelectChannels->setCheck(false);
+		g_resetOrderCountdown = 4;
+		if (!g_timerResetOrder) {
+			g_timerResetOrder = SDL_AddTimer(1000, timerCallbackResetOrder, NULL);
+		}
+	}
+	else if (btn->getState() & RELEASED) {
+		pushEvent(EVENT_UPDATE_SUBSCRIPTIONS);
+		SDL_RemoveTimer(g_timerResetOrder);
+		g_timerResetOrder = 0;
+		g_resetOrderCountdown = 0;
+	}
+}
+
+void onStateChanged_btnChannelWidth(Button* btn) {
+	if (btn->getState() == PRESSED) {
+
+		if (g_settings.channel_width == 0)
+			g_settings.channel_width = 2;
+
+		g_settings.channel_width++;
+		if (g_settings.channel_width > 3)
+			g_settings.channel_width = 1;
+
+		updateLayout();
+		updateChannelWidthButton();
+		browseToSelectedChannel(g_browseToChannel);
+		updateMaxPages(!g_btnSelectChannels->isHighlighted());
+		pushEvent(EVENT_UPDATE_SUBSCRIPTIONS);
+	}
+}
+
+void onStateChanged_btnPageLeft(Button* btn) {
+	if (btn->getState() == PRESSED) {
+		pageLeft();
+	}
+}
+
+void onStateChanged_btnPageRight(Button* btn) {
+	if (btn->getState() == PRESSED) {
+		pageRight();
+	}
+}
+
+void onStateChanged_btnsSelectMix(Button* btn) {
+	if (btn->getState() == PRESSED) {
+		for (vector<pair<string, Button*>>::iterator itB = g_btnSends.begin(); itB != g_btnSends.end(); ++itB) {
+			if (btn != itB->second) {
+				itB->second->setCheck(false);
+			}
+			else {
+				g_selectedMixBus = itB->first;
+			}
+		}
+		if (btn != g_btnMix) {
+			g_btnMix->setCheck(false);
 		}
 		else {
-			g_btnMix->enabled = false;
-			g_btnMix->checked = false;
+			g_selectedMixBus = "MIX";
 		}
-		for (int i = 0; i < g_btnSends.size(); i++)
-		{
-			g_btnSends[i]->enabled = (g_btnSends[i]->text == g_settings.lock_to_mix);
-			g_btnSends[i]->checked = g_btnSends[i]->enabled;
+		g_visibleChannelsCount = -1;
+		updateMaxPages(!g_btnSelectChannels->isHighlighted());
+		updateSubscriptions();
+	}
+}
+
+void onStateChanged_btnLockSettings(Button* btn) {
+
+	if (btn->getState() == PRESSED || btn->getState() == RELEASED) {
+		g_settings.lock_settings = (btn->isHighlighted() == PRESSED);
+
+		if (g_settings.lock_settings)
+			g_settings.save();
+
+		g_btnPostFaderMeter->setEnable(!g_settings.lock_settings && !g_ua_devices.empty());
+		g_btnShowOfflineDevices->setEnable(!g_settings.lock_settings);
+		g_btnLockToMixMIX->setEnable(!g_settings.lock_settings);
+		for (int n = 0; n < 2; n++) {
+			g_btnLockToMixAUX[n]->setEnable(!g_settings.lock_settings);
 		}
+		for (int n = 0; n < 4; n++) {
+			g_btnLockToMixCUE[n]->setEnable(!g_settings.lock_settings);
+			g_btnLabelAUX1[n]->setEnable(!g_settings.lock_settings);
+			g_btnLabelAUX2[n]->setEnable(!g_settings.lock_settings);
+		}
+
+		g_btnReconnect->setEnable(!g_settings.lock_settings);
+
+		g_btnServerlistScan->setEnable(!g_settings.lock_settings);
+		for (vector<Button*>::iterator it = g_btnsServers.begin(); it != g_btnsServers.end(); ++it) {
+			(*it)->setEnable(!g_settings.lock_settings);
+		}
+	}
+}
+
+void onStateChanged_btnPostFaderMeter(Button* btn) {
+	if (btn->getState() == PRESSED) {
+		tcpClientSend("set /PostFaderMetering/value true");
+	}
+	else if (btn->getState() == RELEASED) {
+		tcpClientSend("set /PostFaderMetering/value false");
+	}
+}
+
+void onStateChanged_btnShowOfflineDevices(Button* btn) {
+	if (btn->getState() == PRESSED || btn->getState() == RELEASED) {
+		g_settings.show_offline_devices = g_btnShowOfflineDevices->getState();
+		g_visibleChannelsCount = -1;
+		updateMaxPages(!g_btnSelectChannels->isHighlighted());
+		updateSubscriptions();
+
+	}
+}
+
+void onStateChanged_btnReconnect(Button* btn) {
+	if (btn->getState() == PRESSED || btn->getState() == RELEASED) {
+		g_settings.reconnect_time = g_btnReconnect->isHighlighted() ? 10000 : 0;
+	}
+}
+
+void onStateChanged_btnsLockToMix(Button* btn) {
+	if (btn->getState() == PRESSED || btn->getState() == RELEASED) {
+		if (btn != g_btnLockToMixMIX)
+			g_btnLockToMixMIX->setCheck(false);
+		for (int n = 0; n < 2; n++) {
+			if (btn != g_btnLockToMixAUX[n])
+				g_btnLockToMixAUX[n]->setCheck(false);
+		}
+		for (int n = 0; n < 4; n++) {
+			if (btn != g_btnLockToMixCUE[n])
+				g_btnLockToMixCUE[n]->setCheck(false);
+		}
+
+		if (btn->isHighlighted()) {
+			g_settings.lock_to_mix = btn->getText();
+			g_selectedMixBus = btn->getText();
+
+			if (g_settings.lock_to_mix == "MIX") {
+				g_btnMix->setEnable(true);
+				g_btnMix->setCheck(true);
+			}
+			else {
+				g_btnMix->setEnable(false);
+				g_btnMix->setCheck(false);
+			}
+			for (vector<pair<string, Button*>>::iterator itB = g_btnSends.begin(); itB != g_btnSends.end(); ++itB) {
+				itB->second->setEnable(itB->second->getText() == g_settings.lock_to_mix);
+				itB->second->setCheck(itB->second->isEnabled());
+			}
+		}
+		else {
+			g_settings.lock_to_mix = "";
+			g_btnMix->setEnable(true);
+			for (vector<pair<string, Button*>>::iterator itB = g_btnSends.begin(); itB != g_btnSends.end(); ++itB) {
+				itB->second->setEnable(true);
+			}
+		}
+		updateAllMuteBtnText();
+		pushEvent(EVENT_UPDATE_SUBSCRIPTIONS);
+	}
+}
+
+void onStateChanged_btnsLabelAUX1(Button* btn) {
+	if (btn->getState() == PRESSED || btn->getState() == RELEASED) {
+		for (int n = 0; n < 4; n++) {
+			if (g_btnLabelAUX1[n] != btn) {
+				g_btnLabelAUX1[n]->setCheck(false);
+			}
+		}
+		g_settings.label_aux1 = btn->getText();
+	}
+}
+
+void onStateChanged_btnsLabelAUX2(Button* btn) {
+	if (btn->getState() == PRESSED || btn->getState() == RELEASED) {
+		for (int n = 0; n < 4; n++) {
+			if (g_btnLabelAUX2[n] != btn) {
+				g_btnLabelAUX2[n]->setCheck(false);
+			}
+		}
+		g_settings.label_aux2 = btn->getText();
+	}
+}
+
+void onStateChanged_btnsConnect(Button* btn) {
+	if (btn->getState() == PRESSED) {
+		connect(btn->getId() - ID_BTN_CONNECT);
+	}
+	else if(btn->getState() == RELEASED) {
+		disconnect();
+	}
+}
+
+void onStateChanged_btnsServerlist(Button* btn) {
+	bool updateList = false;
+	if (btn->getState() & PRESSED) {
+		if (btn == g_btnServerlistScan) {
+			for (vector<Button*>::iterator it = g_btnsServers.begin(); it != g_btnsServers.end(); ++it) {
+				(*it)->setCheck(false);
+			}
+			disconnect();
+			g_serverlist_defined = false;
+			updateList = true;
+		}
+		else if (!(btn->getState() & CHECKED)){
+			if (g_btnServerlistScan->isHighlighted()) {
+				g_btnServerlistScan->setCheck(false);
+			}
+			int count = 0;
+			bool discon = true;
+			for (vector<Button*>::iterator it = g_btnsServers.begin(); it != g_btnsServers.end(); ++it) {
+				if ((*it)->isHighlighted()) {
+					count++;
+					if (g_ua_server_connected == (*it)->getText()) {
+						discon = false;
+					}
+				}
+			}
+			if (discon) {
+				disconnect();
+				g_ua_server_last_connection = -1;
+			}
+			if (count >= UA_MAX_SERVER_LIST) {
+				btn->setCheck(false);
+			}
+			g_serverlist_defined = true;
+			updateList = true;
+		}
+	}
+	else if (btn->getState() == RELEASED) {
+		if (btn != g_btnServerlistScan) {
+			int count = 0;
+			for (vector<Button*>::iterator it = g_btnsServers.begin(); it != g_btnsServers.end(); ++it) {
+				if ((*it)->isHighlighted()) {
+					count++;
+				}
+			}
+			if (count < 1) {
+				btn->setCheck(true);
+			}
+			else {
+				if (g_ua_server_connected == btn->getText()) {
+					disconnect();
+					g_ua_server_last_connection = -1;
+				}
+			}
+			g_serverlist_defined = true;
+			updateList = true;
+		}
+	}
+	if (updateList) {
+		for (int i = 0; i < UA_MAX_SERVER_LIST; i++) {
+			g_settings.serverlist[i] = "";
+		}
+
+		if (!g_serverlist_defined) {
+			getServerList();
+		}
+		else {
+			int i = 0;
+			for (vector<Button*>::iterator it2 = g_btnsServers.begin(); it2 != g_btnsServers.end(); ++it2) {
+				if ((*it2)->isHighlighted()) {
+					g_settings.serverlist[i] = (*it2)->getText();
+					i++;
+				}
+			}
+			updateConnectButtons();
+		}
+	}
+}
+
+void onStateChanged_btnInfo(Button* btn) {
+	g_btnSettings->setCheck(false);
+}
+
+void toggleFullscreen() {
+	int x, y;
+	SDL_GetGlobalMouseState(&x, &y);
+	if (SDL_GetWindowFlags(g_window) & SDL_WINDOW_FULLSCREEN_DESKTOP) {
+		SDL_SetWindowFullscreen(g_window, 0);
+
+		int x, y, w, h;
+		SDL_GetWindowPosition(g_window, &x, &y);
+		SDL_GetWindowSize(g_window, &w, &h);
+
+		int t, l, b, r;
+		SDL_GetWindowBordersSize(g_window, &t, &l, &b, &r);
+
+		SDL_Rect rc;
+		if (SDL_GetDisplayUsableBounds(0, &rc) == 0) {
+			if (x < rc.x + l)
+				x = rc.x + l;
+			if (y < rc.y + t)
+				y = rc.y + t;
+			if (w > rc.w - x - r)
+				w = rc.w - x - r;
+			if (h > rc.h - y - b)
+				h = rc.h - y - b;
+		}
+		SDL_SetWindowPosition(g_window, x, y);
+		SDL_SetWindowSize(g_window, w, h);
+
+		g_btnFullscreen->setCheck(false);
 	}
 	else {
-		g_settings.lock_to_mix = "";
-		g_btnMix->enabled = true;
-		for (int i = 0; i < g_btnSends.size(); i++)
-		{
-			g_btnSends[i]->enabled = true;
-		}
+		SDL_SetWindowFullscreen(g_window, SDL_WINDOW_FULLSCREEN_DESKTOP);
+		g_btnFullscreen->setCheck(true);
 	}
-	UpdateSubscriptions();
-	SetRedrawWindow(true);
+	SDL_WarpMouseGlobal(x, y);
 }
 
-void CreateStaticButtons()
+void onStateChanged_btnFullscreen(Button* btn) {
+	if (btn->getState() == PRESSED || btn->getState() == RELEASED) {
+		toggleFullscreen();
+	}
+}
+
+void onStateChanged_btnSimulation(Button* btn) {
+	if (btn->getState() == PRESSED) {
+		g_ua_devices.push_back(new UADevice("0"));
+		g_ua_devices.front()->online = true;
+
+		// cues
+		for (int n = 0; n < 4; n++) {
+			string name = "CUE " + to_string(n + 1);
+			Button* btn = addSendButton(name);
+			loadServerSettings(g_ua_server_connected, btn);
+		}
+		// 2 aux sends
+		for (int n = 0; n < 2; n++) {
+			string name = "AUX " + to_string(n + 1);
+			Button* btn = addSendButton(name);
+			loadServerSettings(g_ua_server_connected, btn);
+		}
+		
+		string names[14] = { "Vocals?g", "Trumpet?y", "Trombone?y", "Guitar Mic?p", "Guitar DI?p", "Bass?bl", "Piano", "OH?o", "Room?o", "Kick?o", "Snare tp?o", "Snare bt?o", "Tom?o", "Hihat?o" };
+		int id = 0;
+		for (int n = 0; n < 14; n++) {
+			Channel* channel = new Channel(g_ua_devices.front(), to_string(id), INPUT);
+			channel->hidden = false;
+			channel->active = true;
+			channel->enabledByUser = true;
+			channel->changeLevel((double)(rand() % 100) / 100.0, true);
+			if (n == 6 || n == 7) {
+				channel->stereo = true;
+				channel->setStereoname(names[n]);
+				channel->pan = -1.0;
+				channel->pan2 = 1.0;
+			}
+			else {
+				channel->setName(names[n]);
+			}
+
+			size_t a = 2;
+			for (vector<pair<string, Button*>>::iterator it = g_btnSends.begin(); it != g_btnSends.end(); ++it) {
+				a = a % g_btnSends.size();
+				string sendId = to_string(a++);
+				Send* send = new Send(channel, sendId);
+				channel->sendsByName.insert({ it->first, send });
+				channel->sendsById.insert({ sendId, send });
+				send->init();
+				send->changeLevel((double)(rand() % 100) / 100.0, true);
+			}
+
+			g_channelsById.insert({ g_ua_devices.front()->id + ".input." + channel->id, channel });
+			g_channelsInOrder.insert({ id, channel });
+			id++;
+			g_ua_devices.front()->channelsTotal++;
+
+			if (channel->stereo) {
+				Channel* channel = new Channel(g_ua_devices.front(), to_string(id), INPUT);
+				g_channelsById.insert({ g_ua_devices.front()->id + ".input." + channel->id, channel });
+				g_channelsInOrder.insert({ id, channel });
+				id++;
+				g_ua_devices.front()->channelsTotal++;
+			}
+		}
+		for (int n = 0; n < 2; n++) {
+			Channel* channel = new Channel(g_ua_devices.front(), to_string(n), AUX);
+			channel->active = true;
+			channel->setName("AUX " + to_string(n + 1));
+			channel->changeLevel((double)(rand() % 100) / 100.0, true);
+			size_t a = 0;
+			for (vector<pair<string, Button*>>::iterator it = g_btnSends.begin(); it != g_btnSends.end(); ++it) {
+				if (a >= g_btnSends.size() - 2) {
+					break;
+				}
+				else {
+					a = a % g_btnSends.size();
+				}
+				string sendId = to_string(a++);
+				Send* send = new Send(channel, sendId);
+				channel->sendsByName.insert({ it->first, send });
+				channel->sendsById.insert({ sendId, send });
+				send->init();
+				send->changeLevel((double)(rand() % 100) / 100.0, true);
+			}
+
+			g_channelsById.insert({ g_ua_devices.front()->id + ".aux." + channel->id, channel });
+			g_channelsInOrder.insert({ 16 + n, channel });
+		}
+		Channel* channel = new Channel(g_ua_devices.front(), "0", MASTER);
+		channel->active = true;
+		channel->setName("MONITOR");
+		channel->changeLevel((double)(rand() % 100) / 100.0, true);
+		g_channelsById.insert({ g_ua_devices.front()->id + ".master." + channel->id, channel });
+		g_channelsInOrder.insert({ 20, channel });
+
+		g_btnSelectChannels->setEnable(true);
+		g_btnReorderChannels->setEnable(true);
+		g_btnChannelWidth->setEnable(true);
+		g_btnMix->setEnable(true);
+		g_selectedMixBus = "MIX";
+		SDL_RemoveTimer(g_timerReenableMuteAll);
+		g_btnMuteAll->setEnable(true);
+	}
+	else if (btn->getState() == RELEASED) {
+		cleanUpSendButtons();
+		cleanUpUADevices();
+
+		g_btnMix->setCheck(true);
+
+		g_btnSelectChannels->setEnable(false);
+		g_btnReorderChannels->setEnable(false);
+		g_btnChannelWidth->setEnable(false);
+		g_btnMix->setEnable(false);
+		g_selectedMixBus = "MIX";
+		SDL_RemoveTimer(g_timerReenableMuteAll);
+		g_btnMuteAll->setEnable(false);
+
+		setRedrawWindow(true);
+	}
+}
+
+void createStaticButtons()
 {
-	g_btnSettings = new Button(ID_BTN_INFO, "Settings",0,0,g_btn_width, g_btn_height,false, true);
-	g_btnSelectChannels = new Button(ID_BTN_SELECT_CHANNELS, "Select\nChannels",0,0,g_btn_width, g_btn_height, false, false);
-	g_btnChannelWidth = new Button(ID_BTN_CHANNELWIDTH, "View:\nRegular",0,0,g_btn_width, g_btn_height, false, false);
-	g_btnPageLeft = new Button(ID_BTN_PAGELEFT, "Page Left",0,0,g_btn_width, g_btn_height,false, false);
-	g_btnPageRight = new Button(ID_BTN_PAGELEFT, "Page Right",0,0,g_btn_width, g_btn_height,false, false);
-	g_btnMix = new Button(ID_BTN_MIX, "MIX", 0, 0, g_btn_width, g_btn_height, true,false);
+	g_btnSettings = new Button(CHECK, ID_BTN_INFO, "Settings",0,0,g_btn_width, g_btn_height,false, true, true, &onStateChanged_btnSettings);
+	g_btnMuteAll = new Button(CHECK, ID_BTN_INFO, "Mute all", 0, 0, g_btn_width, g_btn_height, false, false, true, &onStateChanged_btnMuteAll);
+	updateAllMuteBtnText();
+	g_btnSelectChannels = new Button(CHECK, ID_BTN_SELECT_CHANNELS, "Select\nChannels",0,0,g_btn_width, g_btn_height, 
+		false, false, true, &onStateChanged_btnSelectChannels);
+	g_btnReorderChannels = new Button(CHECK, ID_BTN_SELECT_CHANNELS, "Reorder\nChannels", 0, 0, g_btn_width, g_btn_height, 
+		false, false, true, &onStateChanged_btnReorderChannels);
+	g_btnChannelWidth = new Button(BUTTON, ID_BTN_CHANNELWIDTH, "View:\nRegular",0,0,g_btn_width, g_btn_height, 
+		false, false, true, &onStateChanged_btnChannelWidth);
+	g_btnPageLeft = new Button(BUTTON, ID_BTN_PAGELEFT, "Page Left",0,0,g_btn_width, g_btn_height,false, false, true, &onStateChanged_btnPageLeft);
+	g_btnPageRight = new Button(BUTTON, ID_BTN_PAGELEFT, "Page Right",0,0,g_btn_width, g_btn_height,false, false, true, &onStateChanged_btnPageRight);
+	g_btnMix = new Button(RADIO, ID_BTN_MIX, "MIX", 0, 0, g_btn_width, g_btn_height, true,false, true, &onStateChanged_btnsSelectMix);
 
-	g_btnLockSettings = new Button(0, "On", 0, 0, g_btn_width, g_btn_height / 2.0f, g_settings.lock_settings, true);
-	g_btnShowOfflineDevices = new Button(0, "On", 0, 0, g_btn_width, g_btn_height / 2.0f, g_settings.show_offline_devices, true);
-	g_btnLockToMixMIX = new Button(0, "MIX", 0, 0, g_btn_width, g_btn_height / 2.0f, g_settings.lock_to_mix == "MIX", !g_settings.lock_settings);
-	g_btnLockToMixCUE1 = new Button(0, "CUE 1", 0, 0, g_btn_width, g_btn_height / 2.0f, g_settings.lock_to_mix == "CUE 1", !g_settings.lock_settings);
-	g_btnLockToMixCUE2 = new Button(0, "CUE 2", 0, 0, g_btn_width, g_btn_height / 2.0f, g_settings.lock_to_mix == "CUE 2", !g_settings.lock_settings);
-	g_btnLockToMixCUE3 = new Button(0, "CUE 3", 0, 0, g_btn_width, g_btn_height / 2.0f, g_settings.lock_to_mix == "CUE 3", !g_settings.lock_settings);
-	g_btnLockToMixCUE4 = new Button(0, "CUE 4", 0, 0, g_btn_width, g_btn_height / 2.0f, g_settings.lock_to_mix == "CUE 4", !g_settings.lock_settings);
-	g_btnLockToMixAUX1 = new Button(0, "AUX 1", 0, 0, g_btn_width, g_btn_height / 2.0f, g_settings.lock_to_mix == "AUX 1", !g_settings.lock_settings);
-	g_btnLockToMixAUX2 = new Button(0, "AUX 2", 0, 0, g_btn_width, g_btn_height / 2.0f, g_settings.lock_to_mix == "AUX 2", !g_settings.lock_settings);
-	g_btnLockToMixHP = new Button(0, "HP", 0, 0, g_btn_width, g_btn_height / 2.0f, g_settings.lock_to_mix == "HP", !g_settings.lock_settings);
+	g_btnLockSettings = new Button(CHECK, 0, "Lock settings", 0, 0, g_settingsBtnWidth, g_settingsBtnHeight, g_settings.lock_settings,
+		true, true, &onStateChanged_btnLockSettings);
+	g_btnPostFaderMeter = new Button(CHECK, 0, "Post Fader", 0, 0, g_settingsBtnWidth, g_settingsBtnHeight, false, false, true, &onStateChanged_btnPostFaderMeter);
+	g_btnShowOfflineDevices = new Button(CHECK, 0, "Show", 0, 0, g_settingsBtnWidth, g_settingsBtnHeight, g_settings.show_offline_devices, !g_settings.lock_settings,
+		true, &onStateChanged_btnShowOfflineDevices);
+	g_btnLockToMixMIX = new Button(CHECK, 0, "MIX", 0, 0, g_settingsBtnWidth / 2.0f, g_settingsBtnHeight, g_settings.lock_to_mix == "MIX", !g_settings.lock_settings,
+		true, &onStateChanged_btnsLockToMix);
 
-	g_btnReconnectOn = new Button(0, "On", 0, 0, g_btn_width, g_btn_height / 2.0f, g_settings.reconnect_time != 0, !g_settings.lock_settings);
+	for (int n = 0; n < 2; n++) {
+		g_btnLockToMixAUX[n] = new Button(CHECK, 0, "AUX " + to_string(n + 1), 0, 0, g_settingsBtnWidth / 2.0f, g_settingsBtnHeight,
+			g_settings.lock_to_mix == "AUX " + to_string(n + 1), !g_settings.lock_settings, true, &onStateChanged_btnsLockToMix);
+	}
+	for (int n = 0; n < 4; n++) {
+		g_btnLockToMixCUE[n] = new Button(CHECK, 0, "CUE " + to_string(n + 1), 0.0f, 0.0f, g_settingsBtnWidth / 2.0f, g_settingsBtnHeight,
+			g_settings.lock_to_mix == "CUE " + to_string(n + 1), !g_settings.lock_settings, true, &onStateChanged_btnsLockToMix);
+	}
 
-	g_btnServerlistScan = new Button(0, "Scan network", 0, 0, g_btn_width, g_btn_height / 2.0f, true, !g_settings.lock_settings);
+	g_btnLabelAUX1[0] = new Button(RADIO, 0, "AUX", 0.0f, 0.0f, g_settingsBtnWidth / 2.0f, g_settingsBtnHeight, g_settings.label_aux1 == "AUX",
+		!g_settings.lock_settings, true, &onStateChanged_btnsLabelAUX1);
+	g_btnLabelAUX1[1] = new Button(RADIO, 0, "FX", 0.0f, 0.0f, g_settingsBtnWidth / 2.0f, g_settingsBtnHeight, g_settings.label_aux1 == "FX",
+		!g_settings.lock_settings, true, &onStateChanged_btnsLabelAUX1);
+	g_btnLabelAUX1[2] = new Button(RADIO, 0, "Reverb", 0.0f, 0.0f, g_settingsBtnWidth / 2.0f, g_settingsBtnHeight, g_settings.label_aux1 == "Reverb",
+		!g_settings.lock_settings, true, &onStateChanged_btnsLabelAUX1);
+	g_btnLabelAUX1[3] = new Button(RADIO, 0, "Delay", 0.0f, 0.0f, g_settingsBtnWidth / 2.0f, g_settingsBtnHeight, g_settings.label_aux1 == "Delay",
+		!g_settings.lock_settings, true, &onStateChanged_btnsLabelAUX1);
 
-	g_btnInfo = new Button(0, "Info", 0, 0, g_btn_width, g_btn_height / 2.0f, false, true);
+	g_btnLabelAUX2[0] = new Button(RADIO, 0, "AUX", 0.0f, 0.0f, g_settingsBtnWidth / 2.0f, g_settingsBtnHeight, g_settings.label_aux2 == "AUX",
+		!g_settings.lock_settings, true, &onStateChanged_btnsLabelAUX2);
+	g_btnLabelAUX2[1] = new Button(RADIO, 0, "FX", 0.0f, 0.0f, g_settingsBtnWidth / 2.0f, g_settingsBtnHeight, g_settings.label_aux2 == "FX",
+		!g_settings.lock_settings, true, &onStateChanged_btnsLabelAUX2);
+	g_btnLabelAUX2[2] = new Button(RADIO, 0, "Reverb", 0.0f, 0.0f, g_settingsBtnWidth / 2.0f, g_settingsBtnHeight, g_settings.label_aux2 == "Reverb",
+		!g_settings.lock_settings, true, &onStateChanged_btnsLabelAUX2);
+	g_btnLabelAUX2[3] = new Button(RADIO, 0, "Delay", 0.0f, 0.0f, g_settingsBtnWidth / 2.0f, g_settingsBtnHeight, g_settings.label_aux2 == "Delay",
+		!g_settings.lock_settings, true, &onStateChanged_btnsLabelAUX2);
+
+	g_btnReconnect = new Button(CHECK, 0, "Auto", 0.0f, 0.0f, g_settingsBtnWidth, g_settingsBtnHeight, g_settings.reconnect_time != 0, !g_settings.lock_settings,
+		true, &onStateChanged_btnReconnect);
+
+	g_btnServerlistScan = new Button(RADIO, 0, "Auto scan", 0.0f, 0.0f, g_settingsBtnWidth, g_settingsBtnHeight, true, !g_settings.lock_settings,
+		true, &onStateChanged_btnsServerlist);
+
+	g_btnInfo = new Button(CHECK, 0, "Info", 0.0f, 0.0f, g_settingsBtnWidth, g_settingsBtnHeight, false, true, true, &onStateChanged_btnInfo);
+	g_btnFullscreen = new Button(CHECK, 0, "Fullscreen", 0.0f, 0.0f, g_settingsBtnWidth, g_settingsBtnHeight,
+		g_settings.fullscreen, true, true, &onStateChanged_btnFullscreen);
+
+	g_btnSimulation = new Button(CHECK, 0, "Simulation", 0.0f, 0.0f, g_btn_width, g_btn_height, false, true, false, &onStateChanged_btnSimulation);
 }
 
-void CleanUpStaticButtons()
+void cleanUpStaticButtons()
 {
 	SAFE_DELETE(g_btnSelectChannels);
+	SAFE_DELETE(g_btnReorderChannels);
 	SAFE_DELETE(g_btnChannelWidth);
 	SAFE_DELETE(g_btnPageLeft);
 	SAFE_DELETE(g_btnPageRight);
 	SAFE_DELETE(g_btnSettings);
+	SAFE_DELETE(g_btnMuteAll);
 	SAFE_DELETE(g_btnMix);
 
 	SAFE_DELETE(g_btnLockSettings);
+	SAFE_DELETE(g_btnPostFaderMeter);
 	SAFE_DELETE(g_btnShowOfflineDevices);
 	SAFE_DELETE(g_btnLockToMixMIX);
-	SAFE_DELETE(g_btnLockToMixCUE1);
-	SAFE_DELETE(g_btnLockToMixCUE2);
-	SAFE_DELETE(g_btnLockToMixCUE3);
-	SAFE_DELETE(g_btnLockToMixCUE4);
-	SAFE_DELETE(g_btnLockToMixAUX1);
-	SAFE_DELETE(g_btnLockToMixAUX2);
-	SAFE_DELETE(g_btnLockToMixHP);
-	SAFE_DELETE(g_btnReconnectOn);
-
-	SAFE_DELETE(g_btnServerlistScan);
-
-	SAFE_DELETE(g_btnInfo);
-}
-
-void CreateSendButtons(int sz)
-{
-	if (sz > 0)
-	{
-		float SPACE_X = 2.0f;
-		float SPACE_Y = 2.0f;
-
-		CleanUpSendButtons();
-
-		for (int a = 0; a < sz; a++)
-			g_btnSends.push_back(new Button(ID_BTN_SENDS + a));
-		
-		UpdateLayout();
-		UpdateSubscriptions();
-		SetRedrawWindow(true);
+	for (int n = 0; n < 2; n++) {
+		SAFE_DELETE(g_btnLockToMixAUX[n]);
 	}
+	for (int n = 0; n < 2; n++) {
+		SAFE_DELETE(g_btnLockToMixCUE[n]);
+	}
+	SAFE_DELETE(g_btnReconnect);
+	SAFE_DELETE(g_btnServerlistScan);
+	SAFE_DELETE(g_btnInfo);
+	SAFE_DELETE(g_btnFullscreen);
+	SAFE_DELETE(g_btnSimulation);
 }
 
-void UpdateChannelWidthButton() {
+Button *addSendButton(const string &name)
+{
+	Button* btn = new Button(RADIO, ID_BTN_SENDS + (int)g_btnSends.size(), name, 0, 0, 0, 0, false, true, true, &onStateChanged_btnsSelectMix);
+	g_btnSends.push_back({ name, btn });
+
+	updateLayout();
+	updateSubscriptions();
+
+	return btn;
+}
+
+void updateChannelWidthButton() {
 	switch (g_settings.channel_width) {
 	case 1:
-		g_btnChannelWidth->text = "View:\nNarrow";
+		g_btnChannelWidth->setText("View:\nNarrow");
 		break;
 	case 3:
-		g_btnChannelWidth->text = "View:\nWide";
+		g_btnChannelWidth->setText("View:\nWide");
 		break;
 	default:
-		g_btnChannelWidth->text = "View:\nRegular";
+		g_btnChannelWidth->setText("View:\nRegular");
 	}
 }
 
-void UpdateConnectButtons()
+void updateConnectButtons()
 {
 	int w,h;
 	SDL_GetWindowSize(g_window,&w,&h);
 
-	string connected_btn_text = GetCheckedConnectionButton();
+	string connected_btn_text = getCheckedConnectionButton();
 
-	CleanUpConnectionButtons();
-
-	int sz = min((int)g_ua_server_list.size(), UA_MAX_SERVER_LIST);
+	cleanUpConnectionButtons();
 
 	float SPACE_X = 2.0f;
 	float SPACE_Y = 2.0f;
 
-	for(int i = 0; i < g_ua_server_list.size(); i++)
-	{
+	g_mutex_serverList.lock();
+
+	int i = 0;
+	for (auto it = g_ua_serverList.begin(); it != g_ua_serverList.end(); ++it) {
 		bool useit = !g_serverlist_defined;
 
 		if (g_serverlist_defined) {
 			for (int n = 0; n < UA_MAX_SERVER_LIST; n++) {
-				if (g_settings.serverlist[n].length() && g_ua_server_list[i] == g_settings.serverlist[n]) {
+				if (!g_settings.serverlist[n].empty() && (*it) == g_settings.serverlist[n]) {
 					useit = true;
 					break;
 				}
@@ -3622,41 +4570,52 @@ void UpdateConnectButtons()
 		}
 
 		if (useit) {
-			string btn_text = "Connect to\n" + g_ua_server_list[i];
-			g_btnConnect.push_back(new Button(ID_BTN_CONNECT + i, btn_text,
-				w - g_channel_offset_x + round(SPACE_X + g_btn_width * 0.13f),
-				g_channel_offset_y + g_btnConnect.size() * (g_btn_height + SPACE_Y),
-				g_btn_width, g_btn_height, (btn_text == connected_btn_text)
-			));
+			string btn_text = "Connect to\n" + *it;
+			g_btnConnect.push_back(new Button(CHECK, ID_BTN_CONNECT + i, btn_text,
+				(float)w - g_channel_offset_x + SPACE_X + g_btn_width * 0.13f,
+				g_channel_offset_y + (float)g_btnConnect.size() * (g_btn_height + SPACE_Y),
+				g_btn_width, g_btn_height, (btn_text == connected_btn_text), true, true, &onStateChanged_btnsConnect));
 
 			if (g_btnConnect.size() >= UA_MAX_SERVER_LIST)
 				break;
 		}
+		i++;
 	}
 
-	if (g_btnSettings->checked) {
-		ReleaseSettingsDialog();
-		InitSettingsDialog();
+	g_mutex_serverList.unlock();
+
+	if (g_btnSettings->isHighlighted() && !g_serverlist_defined) {
+		releaseSettingsDialog();
+		initSettingsDialog();
 	}
 
-	SetRedrawWindow(true);
+	setRedrawWindow(true);
 
 	//wenn keine verbindung, verbinde automatisch mit dem ersten server
-	if (g_btnConnect.size() == 1 && connected_btn_text.length() == 0)
-	{
-		SDL_Event event;
-		memset(&event, 0, sizeof(SDL_Event));
-		event.type = SDL_USEREVENT;
-		event.user.code = EVENT_CONNECT;
-		SDL_PushEvent(&event);
+	if (g_btnConnect.size() && g_ua_server_connected.empty()){
+		connect(g_btnConnect[0]->getId() - ID_BTN_CONNECT);
 	}
 }
 
-GFXSurface* LoadGfx(string filename, bool keepRAM = false) {
+void updateAllMuteBtnText() {
+	if (g_btnMuteAll) {
+		if (g_settings.lock_to_mix.length()) {
+			g_btnMuteAll->setText("Mute " + g_settings.lock_to_mix);
+		}
+		else {
+			g_btnMuteAll->setText("Mute All");
+		}
+	}
+}
+
+GFXSurface* loadGfx(string filename, bool keepRAM = false) {
+
+	writeLog(LOG_INFO|LOG_EXTENDED, "loadGfx " + filename);
+
 	string path = getDataPath(filename);
 	GFXSurface *gs = gfx->LoadGfx(path);
 	if (!gs) {
-		toLog("LoadGfx " + path + " failed");
+		writeLog(LOG_ERROR, "loadGfx " + path + " failed");
 		return NULL;
 	}
 
@@ -3668,58 +4627,189 @@ GFXSurface* LoadGfx(string filename, bool keepRAM = false) {
 	return gs;
 }
 
-bool LoadAllGfx() {
+bool loadAllGfx() {
 
-	if (!(g_gsButtonYellow[0] = LoadGfx("btn_yellow_off.gfx", true)))
+	if (!(g_gsButtonYellow[0] = loadGfx("btn_yellow_off.gfx", true)))
 		return false;
-	if (!(g_gsButtonYellow[1] = LoadGfx("btn_yellow_on.gfx", true)))
-		return false;
-
-	if (!(g_gsButtonRed[0] = LoadGfx("btn_red_off.gfx", true)))
-		return false;
-	if (!(g_gsButtonRed[1] = LoadGfx("btn_red_on.gfx", true)))
+	if (!(g_gsButtonYellow[1] = loadGfx("btn_yellow_on.gfx", true)))
 		return false;
 
-	if (!(g_gsButtonGreen[0] = LoadGfx("btn_green_off.gfx", true)))
+	if (!(g_gsButtonRed[0] = loadGfx("btn_red_off.gfx", true)))
 		return false;
-	if (!(g_gsButtonGreen[1] = LoadGfx("btn_green_on.gfx", true)))
-		return false;
-
-	if (!(g_gsButtonBlue[0] = LoadGfx("btn_blue_off.gfx", true)))
-		return false;
-	if (!(g_gsButtonBlue[1] = LoadGfx("btn_blue_on.gfx", true)))
+	if (!(g_gsButtonRed[1] = loadGfx("btn_red_on.gfx", true)))
 		return false;
 
-	if (!(g_gsChannelBg = LoadGfx("channelbg.gfx")))
+	if (!(g_gsButtonGreen[0] = loadGfx("btn_green_off.gfx", true)))
+		return false;
+	if (!(g_gsButtonGreen[1] = loadGfx("btn_green_on.gfx", true)))
 		return false;
 
-	if (!(g_gsBgRight = LoadGfx("bg_right.gfx")))
+	if (!(g_gsButtonBlue[0] = loadGfx("btn_blue_off.gfx", true)))
+		return false;
+	if (!(g_gsButtonBlue[1] = loadGfx("btn_blue_on.gfx", true)))
 		return false;
 
-	if (!(g_gsFaderrail = LoadGfx("faderrail.gfx")))
+	if (!(g_gsChannelBg = loadGfx("channelbg.gfx")))
 		return false;
 
-	if (!(g_gsFader = LoadGfx("fader.gfx")))
+	if (!(g_gsBgRight = loadGfx("bg_right.gfx")))
 		return false;
 
-	if (!(g_gsPan = LoadGfx("poti.gfx")))
+	if (!(g_gsFaderrail = loadGfx("faderrail.gfx")))
 		return false;
 
-	if (!(g_gsPanPointer = LoadGfx("poti_pointer.gfx")))
+	if (!(g_gsFaderWhite = loadGfx("fader.gfx", true)))
+		return false;
+	//black
+	if (!(g_gsFaderBlack = gfx->CopySurface(g_gsFaderWhite)))
+		return false;
+	gfx->SetFilter_ColorShift(g_gsFaderBlack, 0.5f, BLACK);
+	gfx->SetFilter_Saturation(g_gsFaderBlack, -1.0f);
+	gfx->SetFilter_Gamma(g_gsFaderBlack, 0.8f);
+	gfx->SetFilter_Contrast(g_gsFaderBlack, 1.3f);
+	gfx->ApplyFilter(g_gsFaderBlack);
+	gfx->FreeRAM(g_gsFaderBlack);
+	//red
+	if (!(g_gsFaderRed = gfx->CopySurface(g_gsFaderWhite)))
+		return false;
+	gfx->SetFilter_ColorShift(g_gsFaderRed, 0.3f, RED);
+	gfx->SetFilter_Gamma(g_gsFaderRed, 0.8f);
+	gfx->SetFilter_Contrast(g_gsFaderRed, 1.3f);
+	gfx->ApplyFilter(g_gsFaderRed);
+	gfx->FreeRAM(g_gsFaderRed);
+	//green
+	if (!(g_gsFaderGreen = gfx->CopySurface(g_gsFaderWhite)))
+		return false;
+	gfx->SetFilter_ColorShift(g_gsFaderGreen, 0.3f, GREEN);
+	gfx->SetFilter_Gamma(g_gsFaderGreen, 0.8f);
+	gfx->SetFilter_Contrast(g_gsFaderGreen, 1.3f);
+	gfx->ApplyFilter(g_gsFaderGreen);
+	gfx->FreeRAM(g_gsFaderGreen);
+	//blue
+	if (!(g_gsFaderBlue = gfx->CopySurface(g_gsFaderWhite)))
+		return false;
+	gfx->SetFilter_ColorShift(g_gsFaderBlue, 0.3f, BLUE);
+	gfx->SetFilter_Gamma(g_gsFaderBlue, 0.8f);
+	gfx->SetFilter_Contrast(g_gsFaderBlue, 1.3f);
+	gfx->ApplyFilter(g_gsFaderBlue);
+	gfx->FreeRAM(g_gsFaderBlue);
+	//yellow
+	if (!(g_gsFaderYellow = gfx->CopySurface(g_gsFaderWhite)))
+		return false;
+	gfx->SetFilter_ColorShift(g_gsFaderYellow, 0.3f, YELLOW);
+	gfx->SetFilter_Gamma(g_gsFaderYellow, 0.8f);
+	gfx->SetFilter_Contrast(g_gsFaderYellow, 1.3f);
+	gfx->ApplyFilter(g_gsFaderYellow);
+	gfx->FreeRAM(g_gsFaderYellow);
+	//orange
+	if (!(g_gsFaderOrange = gfx->CopySurface(g_gsFaderWhite)))
+		return false;
+	gfx->SetFilter_ColorShift(g_gsFaderOrange, 0.3f, ORANGE);
+	gfx->SetFilter_Gamma(g_gsFaderOrange, 0.8f);
+	gfx->SetFilter_Contrast(g_gsFaderOrange, 1.3f);
+	gfx->ApplyFilter(g_gsFaderOrange);
+	gfx->FreeRAM(g_gsFaderOrange);
+	//purple
+	if (!(g_gsFaderPurple = gfx->CopySurface(g_gsFaderWhite)))
+		return false;
+	gfx->SetFilter_ColorShift(g_gsFaderPurple, 0.3f, PURPLE);
+	gfx->SetFilter_Gamma(g_gsFaderPurple, 0.8f);
+	gfx->SetFilter_Contrast(g_gsFaderPurple, 1.3f);
+	gfx->ApplyFilter(g_gsFaderPurple);
+	gfx->FreeRAM(g_gsFaderPurple);
+	gfx->FreeRAM(g_gsFaderWhite);
+
+	if (!(g_gsPan = loadGfx("poti.gfx")))
+		return false;
+
+	if (!(g_gsPanPointer = loadGfx("poti_pointer.gfx")))
 		return false;
 
 	for (int n = 0; n < 4; n++) {
-		if (!(g_gsLabel[n] = LoadGfx("label" + to_string(n + 1) + ".gfx")))
+		if (!(g_gsLabelWhite[n] = loadGfx("label" + to_string(n + 1) + ".gfx", true))) {
 			return false;
+		}
+
+		//black
+		if (!(g_gsLabelBlack[n] = gfx->CopySurface(g_gsLabelWhite[n]))) {
+			return false;
+		}
+		gfx->SetFilter_ColorShift(g_gsLabelBlack[n], 0.7f, BLACK);
+		gfx->SetFilter_Saturation(g_gsLabelBlack[n], -1.0f);
+		gfx->SetFilter_Gamma(g_gsLabelBlack[n], 0.8f);
+		gfx->SetFilter_Contrast(g_gsLabelBlack[n], 1.3f);
+		gfx->ApplyFilter(g_gsLabelBlack[n]);
+		gfx->FreeRAM(g_gsLabelBlack[n]);
+
+		//red
+		if (!(g_gsLabelRed[n] = gfx->CopySurface(g_gsLabelWhite[n]))) {
+			return false;
+		}
+		gfx->SetFilter_ColorShift(g_gsLabelRed[n], 0.4f, RED);
+		gfx->SetFilter_Gamma(g_gsLabelRed[n], 0.8f);
+		gfx->SetFilter_Contrast(g_gsLabelRed[n], 1.3f);
+		gfx->ApplyFilter(g_gsLabelRed[n]);
+		gfx->FreeRAM(g_gsLabelRed[n]);
+
+		//green
+		if (!(g_gsLabelGreen[n] = gfx->CopySurface(g_gsLabelWhite[n]))) {
+			return false;
+		}
+		gfx->SetFilter_ColorShift(g_gsLabelGreen[n], 0.4f, GREEN);
+		gfx->SetFilter_Gamma(g_gsLabelGreen[n], 0.8f);
+		gfx->SetFilter_Contrast(g_gsLabelGreen[n], 1.3f);
+		gfx->ApplyFilter(g_gsLabelGreen[n]);
+		gfx->FreeRAM(g_gsLabelGreen[n]);
+
+		//blue
+		if (!(g_gsLabelBlue[n] = gfx->CopySurface(g_gsLabelWhite[n]))) {
+			return false;
+		}
+		gfx->SetFilter_ColorShift(g_gsLabelBlue[n], 0.4f, BLUE);
+		gfx->SetFilter_Gamma(g_gsLabelBlue[n], 0.8f);
+		gfx->SetFilter_Contrast(g_gsLabelBlue[n], 1.3f);
+		gfx->ApplyFilter(g_gsLabelBlue[n]);
+		gfx->FreeRAM(g_gsLabelBlue[n]);
+
+		//yellow
+		if (!(g_gsLabelYellow[n] = gfx->CopySurface(g_gsLabelWhite[n]))) {
+			return false;
+		}
+		gfx->SetFilter_ColorShift(g_gsLabelYellow[n], 0.4f, YELLOW);
+		gfx->SetFilter_Gamma(g_gsLabelYellow[n], 0.8f);
+		gfx->SetFilter_Contrast(g_gsLabelYellow[n], 1.3f);
+		gfx->ApplyFilter(g_gsLabelYellow[n]);
+		gfx->FreeRAM(g_gsLabelYellow[n]);
+
+		//orange
+		if (!(g_gsLabelOrange[n] = gfx->CopySurface(g_gsLabelWhite[n]))) {
+			return false;
+		}
+		gfx->SetFilter_ColorShift(g_gsLabelOrange[n], 0.4f, ORANGE);
+		gfx->SetFilter_Gamma(g_gsLabelOrange[n], 0.8f);
+		gfx->SetFilter_Contrast(g_gsLabelOrange[n], 1.3f);
+		gfx->ApplyFilter(g_gsLabelOrange[n]);
+		gfx->FreeRAM(g_gsLabelOrange[n]);
+
+		//purple
+		if (!(g_gsLabelPurple[n] = gfx->CopySurface(g_gsLabelWhite[n]))) {
+			return false;
+		}
+		gfx->SetFilter_ColorShift(g_gsLabelPurple[n], 0.4f, PURPLE);
+		gfx->SetFilter_Gamma(g_gsLabelPurple[n], 0.8f);
+		gfx->SetFilter_Contrast(g_gsLabelPurple[n], 1.3f);
+		gfx->ApplyFilter(g_gsLabelPurple[n]);
+		gfx->FreeRAM(g_gsLabelPurple[n]);
+
+		gfx->FreeRAM(g_gsLabelWhite[n]);
 	}
 
 	return true;
 }
 
-void ReleaseAllGfx()
+void releaseAllGfx()
 {
-	for (int n = 0; n < 2; n++)
-	{
+	for (int n = 0; n < 2; n++) {
 		gfx->DeleteSurface(g_gsButtonYellow[n]);
 		gfx->DeleteSurface(g_gsButtonRed[n]);
 		gfx->DeleteSurface(g_gsButtonGreen[n]);
@@ -3728,58 +4818,73 @@ void ReleaseAllGfx()
 	gfx->DeleteSurface(g_gsChannelBg);
 	gfx->DeleteSurface(g_gsBgRight);
 	gfx->DeleteSurface(g_gsFaderrail);
-	gfx->DeleteSurface(g_gsFader);
+	gfx->DeleteSurface(g_gsFaderWhite);
+	gfx->DeleteSurface(g_gsFaderBlack);
+	gfx->DeleteSurface(g_gsFaderRed);
+	gfx->DeleteSurface(g_gsFaderGreen);
+	gfx->DeleteSurface(g_gsFaderBlue);
+	gfx->DeleteSurface(g_gsFaderYellow);
+	gfx->DeleteSurface(g_gsFaderOrange);
+	gfx->DeleteSurface(g_gsFaderPurple);
 	gfx->DeleteSurface(g_gsPan);
 	gfx->DeleteSurface(g_gsPanPointer);
-	gfx->DeleteSurface(g_gsLabel[0]);
-	gfx->DeleteSurface(g_gsLabel[1]);
-	gfx->DeleteSurface(g_gsLabel[2]);
-	gfx->DeleteSurface(g_gsLabel[3]);
+
+	for (int n = 0; n < 4; n++) {
+		gfx->DeleteSurface(g_gsLabelWhite[n]);
+		gfx->DeleteSurface(g_gsLabelBlack[n]);
+		gfx->DeleteSurface(g_gsLabelRed[n]);
+		gfx->DeleteSurface(g_gsLabelGreen[n]);
+		gfx->DeleteSurface(g_gsLabelBlue[n]);
+		gfx->DeleteSurface(g_gsLabelYellow[n]);
+		gfx->DeleteSurface(g_gsLabelOrange[n]);
+		gfx->DeleteSurface(g_gsLabelPurple[n]);
+	}
 }
 
-void InitSettingsDialog() {
+void initSettingsDialog() {
 	
-	g_btnServerlistScan->checked = true;
+	g_btnServerlistScan->setCheck(true);
 
-	for (vector<string>::iterator it = g_ua_server_list.begin(); it != g_ua_server_list.end(); ++it) {
+	g_mutex_serverList.lock();
+	for (vector<string>::iterator it = g_ua_serverList.begin(); it != g_ua_serverList.end(); ++it) {
 		bool listed = false;
 		for (int n = 0; n < UA_MAX_SERVER_LIST; n++) {
 			if (*it == g_settings.serverlist[n]) {
-				g_btnServerlistScan->checked = false;
+				g_btnServerlistScan->setCheck(false);
 				listed = true;
 				break;
 			}
 		}
-		g_btnsServers.push_back(new Button(0, *it, 0, 0, g_btn_width, g_btn_height / 2.0f, listed, !g_settings.lock_settings));
+		g_btnsServers.push_back(new Button(CHECK, 0, *it, 0, 0, g_btn_width, g_btn_height / 2.0f, listed, !g_settings.lock_settings,
+			true, &onStateChanged_btnsServerlist));
 
 		if (g_btnsServers.size() >= UA_MAX_SERVER_LIST_SETTING)
 			break;
 	}
+	g_mutex_serverList.unlock();
+
+	updateLayout();
 }
 
-void ReleaseSettingsDialog() {
+void cleanUpUADevices() {
+	const std::lock_guard<std::mutex> lock(g_mutex_uaDevices);
+	clearChannels();
+	for (vector<UADevice*>::iterator it = g_ua_devices.begin(); it != g_ua_devices.end(); ++it) {
+		SAFE_DELETE(*it);
+	}
+	g_ua_devices.clear();
+	g_activeChannelsCount = -1;
+	g_visibleChannelsCount = -1;
+}
+
+void releaseSettingsDialog() {
 	for (vector<Button*>::iterator it = g_btnsServers.begin(); it != g_btnsServers.end(); ++it) {
 		SAFE_DELETE(*it);
 	}
 	g_btnsServers.clear();
 }
 
-string GetFileName(string postfix)
-{
-/*	char user[UNLEN + 1];
-	DWORD sz = UNLEN + 1;
-	GetUserName(user, &sz);
-
-	char computer[MAX_COMPUTERNAME_LENGTH + 1];
-	sz = MAX_COMPUTERNAME_LENGTH + 1;
-	GetComputerName(computer, &sz);
-
-	sprintf(filename, "%s@%s@%s.json", user, computer, postfix);*/
-
-	return postfix + ".json";
-}
-
-bool LoadServerSettings(string server_name, Button *btnSend)
+bool loadServerSettings(const string &server_name, Button *btnSend)
 {
 	if (server_name.length() == 0 || !btnSend)
 		return false;
@@ -3795,57 +4900,62 @@ bool LoadServerSettings(string server_name, Button *btnSend)
 #ifdef __ANDROID__
 		element = parser.parse(serverSettingsJSON[server_name]);
 #else
-		string filename = GetFileName(server_name);
+		string filename = server_name + ".json";
 		element = parser.load(getPrefPath(filename));
 #endif
 
 		string_view selected_send = element["ua_server"]["selected_mix"];
 
-		if (!g_settings.lock_to_mix.length() && btnSend->text == selected_send)
+		if (g_settings.lock_to_mix.empty())
 		{
-			for (int i = 0; i < g_btnSends.size(); i++)
-			{
-				if (g_btnSends[i]->id == btnSend->id)
-					continue;
-				g_btnSends[i]->checked = false;
-			}
-			g_btnMix->checked = false;
+			if (btnSend->getText() == selected_send) {
+				for (vector<pair<string, Button*>>::iterator itB = g_btnSends.begin(); itB != g_btnSends.end(); ++itB) {
+					if (itB->second->getId() == btnSend->getId()) {
+						g_selectedMixBus = itB->first;
+						continue;
+					}
+					itB->second->setCheck(false);
+				}
+				g_btnMix->setCheck(false);
 
-			btnSend->checked = true;
+				btnSend->setCheck(true);
+			}
+		}
+		else {
+			g_selectedMixBus = g_settings.lock_to_mix;
 		}
 	}
-	catch (simdjson_error e)
-	{
+	catch (const simdjson_error&) {
 		result = false;
 	}
 	
 	// disable mix-button if locked to different mix
 	if (g_settings.lock_to_mix.length()) {
 		if (g_settings.lock_to_mix == "MIX") {
-			g_btnMix->enabled = true;
-			g_btnMix->checked = true;
-			for (int i = 0; i < g_btnSends.size(); i++) {
-				g_btnSends[i]->enabled = false;
-				g_btnSends[i]->checked = false;
+			g_btnMix->setEnable(true);
+			g_btnMix->setCheck(true);
+			for (vector<pair<string, Button*>>::iterator itB = g_btnSends.begin(); itB != g_btnSends.end(); ++itB) {
+				itB->second->setEnable(false);
+				itB->second->setCheck(false);
 			}
 		}
 		else {
-			g_btnMix->enabled = false;
-			g_btnMix->checked = false;
-			btnSend->enabled = (btnSend->text == g_settings.lock_to_mix);
-			btnSend->checked = (btnSend->text == g_settings.lock_to_mix);
+			g_btnMix->setEnable(false);
+			g_btnMix->setCheck(false);
+			btnSend->setEnable(btnSend->getText() == g_settings.lock_to_mix);
+			btnSend->setCheck(btnSend->getText() == g_settings.lock_to_mix);
 		}
 	}
 
 	return result;
 }
 
-bool LoadServerSettings(string server_name, UADevice *ua_dev) // läd channel-select & group-setting für das jeweilige device
+bool loadServerSettings(const string &server_name) // läd channel-select & group-setting
 {
-	if (server_name.length() == 0 || !ua_dev)
+	if (server_name.length() == 0)
 		return false;
 
-	string filename = GetFileName(server_name);
+	string filename = server_name + ".json";
 
 	//JSON
 	try
@@ -3856,42 +4966,53 @@ bool LoadServerSettings(string server_name, UADevice *ua_dev) // läd channel-se
 #ifdef __ANDROID__
 		element = parser.parse(serverSettingsJSON[server_name]);
 #else
-		string filename = GetFileName(server_name);
+		string filename = server_name + ".json";
 		element = parser.load(getPrefPath(filename));
 #endif
+		map<int, Channel*> channelsInOrder;
+		for (unordered_map<string, Channel*>::iterator it = g_channelsById.begin(); it != g_channelsById.end(); ++it) {
 
-		for (int n = 0; n < ua_dev->inputsCount; n++)
-		{
-			if (ua_dev->ua_id.length() == 0 || !ua_dev->inputs)
-				break;
+			string type_str = it->second->type == INPUT ? ".input." : ".aux.";
 
 			try
 			{
-				ua_dev->inputs[n].selected_to_show = element["ua_server"][ua_dev->ua_id][ua_dev->inputs[n].ua_id + " selected"];
-				//override als selected, wenn name mit ! beginnt
-				if (ua_dev->inputs[n].IsOverriddenShow())
-					ua_dev->inputs[n].selected_to_show = true;
-				//override als nicht selected, wenn name mit # endet
-				else if (ua_dev->inputs[n].IsOverriddenHide())
-					ua_dev->inputs[n].selected_to_show = false;
+				int order = (int)((int64_t)element["ua_server"][it->second->device->id + type_str + it->second->id + " order"]);
+				channelsInOrder.insert({ order, it->second });
+
 			}
-			catch (simdjson_error e) {}
+			catch (const simdjson_error&) {}
 			try
 			{
-				int64_t value = element["ua_server"][ua_dev->ua_id][ua_dev->inputs[n].ua_id + " group"];
-				ua_dev->inputs[n].fader_group = (int)value;
+				it->second->selected_to_show = element["ua_server"][it->second->device->id + type_str + it->second->id + " selected"];
+
+				if (it->second->isOverriddenShow())
+					it->second->selected_to_show = true;
+				else if (it->second->isOverriddenHide())
+					it->second->selected_to_show = false;
 			}
-			catch (simdjson_error e) {}
+			catch (const simdjson_error&) {}
+			try
+			{
+				int64_t value = element["ua_server"][it->second->device->id + type_str + it->second->id + " group"];
+				it->second->fader_group = (int)value;
+			}
+			catch (const simdjson_error&) {}
 		}
+
+		//validate if all channels ordered
+		if (channelsInOrder.size() == g_channelsInOrder.size()) {
+			g_channelsInOrder.swap(channelsInOrder);
+		}
+
+		g_browseToChannel = (int)((int64_t)element["ua_server"]["first_visible_channel"]);
 	}
-	catch (simdjson_error e)
-	{
+	catch (const simdjson_error&) {
 		return false;
 	}
 	return true;
 }
 
-bool SaveServerSettings(string server_name)
+bool saveServerSettings(const string &server_name)
 {
 	if (server_name.length() == 0)
 		return false;
@@ -3904,54 +5025,34 @@ bool SaveServerSettings(string server_name)
 		json += "\"name\": \"" + g_ua_server_connected  + "\",\n";
 
 		json += "\"selected_mix\": ";
+		json += "\"" + g_selectedMixBus + "\",\n";
 
-		if (g_btnMix->checked)
-		{
-			json += "\"MIX\",\n";
-		}
-		else
-		{
-			for (int n = 0; n < g_btnSends.size(); n++)
-			{
-				if (g_btnSends[n]->checked)
-				{
-					json += "\"" + g_btnSends[n]->text + "\",\n";
-					break;
-				}
-			}
-		}
+		string ua_dev;
+		int channel = getMiddleSelectedChannel();
+		json += "\"first_visible_channel\": " + to_string(channel) + ",\n";
+
 
 		bool set_komma = false;
-		for (int n = 0; n < MAX_UA_DEVICES; n++)
-		{
-			if (g_ua_devices[n].ua_id.length() == 0)
-				continue;
+		for (map<int, Channel*>::iterator it = g_channelsInOrder.begin(); it != g_channelsInOrder.end(); ++it) {
 
-			if (set_komma)
+			if (set_komma) {
 				json += ",\n";
+			}			
 
-				json += "\"" + g_ua_devices[n].ua_id + "\": {\n";
-			if (g_ua_devices[n].inputs)
-			{
-				bool set_komma2 = false;
-				for (int i = 0; i < g_ua_devices[n].inputsCount; i++)
-				{
-					if (set_komma2)
-						json += ",\n";
-
-						json += "\"" + g_ua_devices[n].inputs[i].ua_id + " group\": " + to_string(g_ua_devices[n].inputs[i].fader_group) + "\n,";
-
-						json += "\"" + g_ua_devices[n].inputs[i].ua_id + " selected\": ";
-					if (g_ua_devices[n].inputs[i].selected_to_show)
-						json += "true";
-					else
-						json += "false";
-					set_komma2 = true;
-				}
+			string type_str = it->second->type == INPUT ? ".input." : ".aux.";
+			json += "\"" + it->second->device->id + type_str + it->second->id + " order\": " + to_string(it->first) + ", ";
+			json += "\"" + it->second->device->id + type_str + it->second->id + " group\": " + to_string(it->second->fader_group) + ", ";
+			json += "\"" + it->second->device->id + type_str + it->second->id + " selected\": ";
+			
+			if (it->second->selected_to_show) {
+				json += "true";
 			}
-			json += "}";
+			else {
+				json += "false";
+			}
 			set_komma = true;
 		}
+
 		json += "}\n";
 	}
 
@@ -3961,7 +5062,7 @@ bool SaveServerSettings(string server_name)
 	serverSettingsJSON.insert_or_assign(server_name, json);
 	// store to map and save map @ onPause in Cuefinger-class (java)
 #else
-	string filename = GetFileName(server_name);
+	string filename = server_name + ".json";
 	string path = getPrefPath(filename);
 
 	FILE* fh = NULL;
@@ -3977,74 +5078,65 @@ bool SaveServerSettings(string server_name)
 	return true;
 }
 
-void ConvertToDpiAware(float *fx, float *fy, bool round_values)
-{
-	float dpiX, dpiY;
-	SDL_GetDisplayDPI(0, NULL , &dpiX, &dpiY);
+bool Settings::load(const string &json) {
 
-	if (fx)
-	{
-		*fx = *fx * dpiX / 96;
-		if (round_values)
-			*fx = round(*fx);
-	}
-	if (fy)
-	{
-		*fy = *fy * dpiY / 96;
-		if (round_values)
-			*fy = round(*fy);
-	}
-}
-
-bool Settings::load(string *json) {
 	//JSON
 	try {
         dom::parser parser;
         dom::element element;
-        if (!json) {
-            string filename = GetFileName("settings");
+        if (json.empty()) {
+            string filename = "settings.json";
             element = parser.load(getPrefPath(filename));
         }
         else {
-            element = parser.parse(*json);
+            element = parser.parse(json);
         }
-
 		try {
 			this->lock_settings = element["general"]["lock_settings"];
 		}
-		catch (simdjson_error e) {}
+		catch (const simdjson_error&) {}
 
 		try {
 			this->show_offline_devices = element["general"]["show_offline_devices"];
 		}
-		catch (simdjson_error e) {}
+		catch (const simdjson_error&) {}
 
 		try {
 			string_view sv = element["general"]["lock_to_mix"];
 			this->lock_to_mix = string{sv};
 		}
-		catch (simdjson_error e) {
-			this->lock_to_mix = "";
+		catch (const simdjson_error&) {}
+
+		try {
+			string_view sv = element["general"]["label_aux1"];
+			this->label_aux1 = string{ sv };
 		}
+		catch (const simdjson_error&) {}
+
+		try {
+			string_view sv = element["general"]["label_aux2"];
+			this->label_aux2 = string{ sv };
+		}
+		catch (const simdjson_error&) {}
+
+		updateAllMuteBtnText();
 
 		try {
 			int64_t reconnect_time = element["general"]["reconnect_time"];
-			this->reconnect_time = reconnect_time;
+			this->reconnect_time = (unsigned int)reconnect_time;
 		}
-		catch (simdjson_error e) {
-			this->reconnect_time = 10000;
-		}
+		catch (const simdjson_error&) {}
 
 		try {
 			this->extended_logging = element["general"]["extended_logging"];
 		}
-		catch (simdjson_error e) {}
+		catch (const simdjson_error&) {}
 
 		try {
 			this->maximized = element["window"]["maximized"];
 			this->fullscreen = element["window"]["fullscreen"];
 		}
-		catch (simdjson_error e) {}
+		catch (const simdjson_error&) {}
 
 		int64_t x, y, w, h;
 		x = element["window"]["x"];
@@ -4059,23 +5151,19 @@ bool Settings::load(string *json) {
 
 		try {
 			int64_t channel_width = element["view"]["channel_width"];
-			this->channel_width = channel_width;
+			this->channel_width = (int)channel_width;
 		}
-		catch (simdjson_error e) {
-			this->channel_width = 0;
-		}
+		catch (const simdjson_error&) {}
 
 		for (int n = 0; n < UA_MAX_SERVER_LIST; n++) {
 			try {
 				string_view sv = element["serverlist"][to_string(n+1)];
 				this->serverlist[n] = string{sv};
 			}
-			catch (simdjson_error e) {
-				this->serverlist[n] = "";
-			}
+			catch (const simdjson_error&) {}
 		}
 	}
-	catch (simdjson_error e) {
+	catch (const simdjson_error&) {
 		return false;
 	}
 
@@ -4089,15 +5177,23 @@ string Settings::toJSON() {
 
     //STARTUP
     json+= "\"general\": {\n";
-    if(this->lock_settings)
-        json+="\"lock_settings\": true,\n";
-    else
-        json+="\"lock_settings\": false,\n";
-	if (this->show_offline_devices)
+	if (this->lock_settings) {
+		json += "\"lock_settings\": true,\n";
+	}
+	else {
+		json += "\"lock_settings\": false,\n";
+	}
+	if (this->show_offline_devices) {
 		json += "\"show_offline_devices\": true,\n";
-	else
+	}
+	else {
 		json += "\"show_offline_devices\": false,\n";
+	}
     json+="\"lock_to_mix\": \"" + this->lock_to_mix + "\",\n";
+
+	json += "\"label_aux1\": \"" + this->label_aux1 + "\",\n";
+	json += "\"label_aux2\": \"" + this->label_aux2 + "\",\n";
+
     json+="\"reconnect_time\": " + to_string(this->reconnect_time) + ",\n";
     if(this->extended_logging)
         json+="\"extended_logging\": true\n";
@@ -4151,7 +5247,7 @@ string Settings::toJSON() {
 
 bool Settings::save()
 {
-	string filename = GetFileName("settings");
+	string filename = "settings.json";
 	string path = getPrefPath(filename);
 
 	FILE* fh = NULL;
@@ -4167,76 +5263,62 @@ bool Settings::save()
 	return true;
 }
 
-#ifdef __ANDROID__
-extern "C" void Java_franqulator_cuefinger_Cuefinger_load(JNIEnv *env, jobject obj, jobject assetManager){
-
-    AAssetManager *mgr = AAssetManager_fromJava(env, assetManager);
-    if (mgr == NULL) {
-        toLog("error loading asset manager");
-    }
-    else {
-        android_fopen_set_asset_manager(mgr);
-    }
+void initGlobals() { // needed to reset globals for android
+	g_running = true;
+	g_window = NULL;
+	g_timer_network_serverlist = 0;
+	g_timer_network_reconnect = 0;
+	g_timer_network_timeout = 0;
+	g_timer_network_send_timeout_msg = 0;
+	g_timerFlipPage = 0;
+	g_timerResetOrder = 0;
+	g_timerUnmuteAll = 0;
+	g_timerSelectAllChannels = 0;
+	g_dragPageFlip = 0;
+	g_resetOrderCountdown = 0;
+	g_unmuteAllCountdown = 0;
+	g_selectAllChannelsCountdown = 0;
+	g_ua_server_connected = "";
+	g_ua_server_last_connection = -1;
+	g_msg = "";
+	g_selectedMixBus = "MIX";
+	g_channels_per_page = 0;
+	g_browseToChannel = 0;
+	g_activeChannelsCount = -1;
+	g_visibleChannelsCount = -1;
+	g_redraw = false;
+	g_serverlist_defined = false;
+	g_reorder_dragging = false;
+	g_btnSelectChannels = NULL;
+	g_btnReorderChannels = NULL;
+	g_btnChannelWidth = NULL;
+	g_btnPageLeft = NULL;
+	g_btnPageRight = NULL;
+	g_btnMix = NULL;
+	g_btnSettings = NULL;
+	g_btnMuteAll = NULL;
+	g_btnLockSettings = NULL;
+	g_btnPostFaderMeter = NULL;
+	g_btnShowOfflineDevices = NULL;
+	g_btnLockToMixMIX = NULL;
+	memset(g_btnLockToMixCUE, 4, sizeof(Button*));
+	memset(g_btnLockToMixAUX, 2, sizeof(Button*));
+	memset(g_btnLabelAUX1, 4, sizeof(Button*));
+	memset(g_btnLabelAUX2, 4, sizeof(Button*));
+	g_btnInfo = NULL;
+	g_btnFullscreen = NULL;
+	g_btnReconnect = NULL;
+	g_btnServerlistScan = NULL;
+	g_tcpClient = NULL;
+	g_page = 0;
+	g_fntMain = NULL;
+	g_fntInfo = NULL;
+	g_fntChannelBtn = NULL;
+	g_fntLabel = NULL;
+	g_fntFaderScale = NULL;
+	g_fntOffline = NULL;
+	g_refreshingServerList = false;
 }
-
-
-extern "C" void Java_franqulator_cuefinger_Cuefinger_loadSettings(JNIEnv *env, jobject obj, jstring json){
-    string njson((const char*)env->GetStringUTFChars(json, NULL));
-    g_settings.load(&njson);
-    g_settings.fullscreen = true; // auf android immer im fullscreen starten
-}
-
-extern "C" jstring Java_franqulator_cuefinger_Cuefinger_getSettingsJSON(JNIEnv *env, jobject obj){
-    return env->NewStringUTF(g_settings.toJSON().c_str());
-}
-
-extern "C" void Java_franqulator_cuefinger_Cuefinger_loadServerSettings(JNIEnv* env, jobject obj, jstring json) {
-	string njson((const char*)env->GetStringUTFChars(json, NULL));
-
-	size_t posSvr = njson.find("svr=", 0);
-	while (posSvr != string::npos) {
-		posSvr += 4;
-
-		size_t posSet = njson.find("set=", posSvr);
-		if (posSet == string::npos) {
-			break;
-		}
-		string server = njson.substr(posSvr, posSet - posSvr);
-		
-		posSet += 4;
-		posSvr = njson.find("svr=", posSet);
-        if(posSvr == string::npos) {
-            posSvr = njson.length();
-        }
-		string settings = njson.substr(posSet, posSvr - posSet);
-
-		serverSettingsJSON.insert_or_assign(server, settings);
-	}
-}
-
-extern "C" jstring Java_franqulator_cuefinger_Cuefinger_getServerSettingsJSON(JNIEnv* env, jobject obj) {
-	string njson;
-
-    if(g_ua_server_connected.length() != 0) {
-        SaveServerSettings(g_ua_server_connected);
-    }
-
-	for (map<string, string>::iterator it = serverSettingsJSON.begin(); it != serverSettingsJSON.end(); ++it) {
-		njson += "svr=" + it->first + "set=" +  it->second;
-	}
-
-	return env->NewStringUTF(njson.c_str());
-}
-
-extern "C" void Java_franqulator_cuefinger_Cuefinger_terminateAllPingThreads(JNIEnv* env, jobject obj) {
-	TerminateAllPingThreads(); // also stores serverdata at disconnect()
-}
-
-extern "C" void Java_franqulator_cuefinger_Cuefinger_cleanUp(JNIEnv *env, jobject obj){
-    CleanUp(); // also stores serverdata at disconnect()
-}
-
-#endif
 
 #ifdef _WIN32
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, char *lpCmdLine, int nCmdShow) {
@@ -4246,7 +5328,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, char *lpCmdLine
 int main(int argc, char* argv[]) {
 #endif
 
+	initGlobals();
 	SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_EVENTS);
+	g_userEventBeginNum = SDL_RegisterEvents(USER_EVENT_COUNT);
+	SDL_LogSetAllPriority(SDL_LOG_PRIORITY_INFO);
 
 #ifdef __ANDROID__
     initDataPath(""); 
@@ -4265,7 +5350,12 @@ int main(int argc, char* argv[]) {
 	initPrefPath(path);
 #endif	  
 
-	clearLog(APP_NAME + " " + APP_VERSION);
+
+#ifndef __ANDROID__
+	initLog(APP_NAME + " " + APP_VERSION);
+#endif
+
+	writeLog(LOG_INFO, APP_NAME + " " + APP_VERSION);
 
 	unsigned int startup_delay = 0; // in ms
 
@@ -4278,7 +5368,7 @@ int main(int argc, char* argv[]) {
 			string value = arg.substr(split + 1);
 
 			if (key == "delay") {
-				startup_delay = stoul(value);
+				startup_delay = (unsigned int)stoul(value);
 			}
 		}
 	}
@@ -4288,13 +5378,14 @@ int main(int argc, char* argv[]) {
 #endif
 
 #ifndef __ANDROID__
+	writeLog(LOG_INFO|LOG_EXTENDED, "load settings");
 	if (!g_settings.load())
 	{
-		toLog("settings.load failed");
+		writeLog(LOG_ERROR, "settings.load failed");
 
 		SDL_Rect rc;
 		if (SDL_GetDisplayBounds(0, &rc) != 0) {
-			toLog("SDL_GetDisplayBounds failed: " + string(SDL_GetError()));
+			writeLog(LOG_ERROR, "SDL_GetDisplayBounds failed: " + string(SDL_GetError()));
 			SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR ,"Error","SDL_GetDisplayBounds failed", NULL);
 			return 1;       
 		}
@@ -4307,7 +5398,7 @@ int main(int argc, char* argv[]) {
 #else
     SDL_Rect rc;
     if (SDL_GetDisplayBounds(0, &rc) != 0) {
-        toLog("SDL_GetDisplayBounds failed: " + string(SDL_GetError()));
+		writeLog(LOG_ERROR, "SDL_GetDisplayBounds failed: " + string(SDL_GetError()));
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR ,"Error","SDL_GetDisplayBounds failed", NULL);
         return 1;
     }
@@ -4317,14 +5408,18 @@ int main(int argc, char* argv[]) {
     g_settings.w=rc.w;
     g_settings.h=rc.h;
 #endif
+//	g_settings.extended_logging = false;
 
-	CreateStaticButtons();
+	writeLog(LOG_INFO | LOG_EXTENDED, "create gui objects");
+	createStaticButtons();
 
-	if (!g_settings.extended_logging) toLog("Extended logging is deactivated.\nYou can activate it in settings.json but keep in mind that it will slow down performance.");
-	
+#ifndef __ANDROID__
+	writeLog(LOG_INFO, "Extended logging is deactivated.\nYou can activate it in settings.json but keep in mind that it will slow down performance.");
+#endif
+
 	SDL_Delay(startup_delay);
 
-	UpdateChannelWidthButton();
+	updateChannelWidthButton();
 
 	int flag = GFX_HARDWARE;
 	if(g_settings.maximized)
@@ -4336,705 +5431,679 @@ int main(int argc, char* argv[]) {
 		flag |= GFX_FULLSCREEN_DESKTOP;
 	}
 
+	writeLog(LOG_INFO | LOG_EXTENDED, "init gfx engine " + to_string(g_settings.w) + "x" +to_string(g_settings.h));
 	try {
 		gfx = new GFXEngine(WND_TITLE, g_settings.x, g_settings.y, g_settings.w, g_settings.h, flag, &g_window);
 	}
-	catch (invalid_argument e) {
-		toLog("InitGfx failed : " + string(SDL_GetError()));
+	catch (const invalid_argument&) {
+		writeLog(LOG_ERROR, "InitGfx failed : " + string(SDL_GetError()));
 		SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR ,"Error","InitGfx failed", NULL);
 		return 1;
 	}
-	SDL_SetWindowMinimumSize(g_window, 320, 240);
-	if (LoadAllGfx()) {
-        UpdateLayout();
+
+	SDL_SetWindowMinimumSize(g_window, 320, 320);
+
+	writeLog(LOG_INFO | LOG_EXTENDED, "load gfx");
+	if (loadAllGfx()) {
+
+		writeLog(LOG_INFO | LOG_EXTENDED, "update layout and load fonts");
+        updateLayout();
+        setRedrawWindow(true);
 
 #ifdef _WIN32
-        InitNetwork();
+        TCPClient::initNetwork();
 #endif
         for (int n = 0; n < UA_MAX_SERVER_LIST; n++) {
-            if (g_settings.serverlist[n].length() > 0) {
-                g_ua_server_list.push_back(g_settings.serverlist[n]);
+            if (!g_settings.serverlist[n].empty()) {
+                serverListAdd(g_settings.serverlist[n]);
             }
         }
-        if (g_ua_server_list.size()) // serverliste wurde definiert, automatische Serversuche wird nicht ausgeführt
+        if (!g_ua_serverList.empty()) // serverliste wurde definiert, automatische Serversuche wird nicht ausgeführt
         {
             g_serverlist_defined = true;
-            UpdateConnectButtons();
+            updateConnectButtons();
         } else // Serverliste wurde nicht definiert, automatische Suche wird ausgeführt
         {
             g_serverlist_defined = false;
-            UA_GetServerList();
+            getServerList();
         }
-        bool running = true;
+        
         SDL_Event e;
-        while (running) {
-            if (SDL_WaitEventTimeout(&e, 33) > 0)
-                //	while (SDL_PollEvent(&e) > 0)
-            {
-                switch (e.type) {
-                    case SDL_FINGERDOWN: {
-                        if (!g_btnSettings->checked) {
-                            OnTouchDown(NULL, &e.tfinger);
-                        }
-                        break;
-                    }
-                    case SDL_FINGERUP: {
-                        if (!g_btnSettings->checked) {
-                            OnTouchUp(false, &e.tfinger);
-                        }
-                        break;
-                    }
-                    case SDL_FINGERMOTION: {
-                        if (!g_btnSettings->checked) {
-                            //only use last fingermotion event
-                            SDL_Event events[20];
-                            events[0] = e;
-                            SDL_PumpEvents();
-                            int ev_num =
-                                    SDL_PeepEvents(&events[1], 19, SDL_GETEVENT, SDL_FINGERMOTION,
-                                                   SDL_FINGERMOTION) + 1;
+		unsigned long long maxFpsTimer = 0;
 
-                            for (int n = ev_num - 1; n >= 0; n--) {
-                                bool drop_event = false;
+		writeLog(LOG_INFO | LOG_EXTENDED, "start message loop");
+        while (g_running) {
+			while (SDL_PollEvent(&e))
+			{
+				switch (e.type) {
+				case SDL_FINGERDOWN: {
+					if (!g_btnSettings->isHighlighted()) {
+						onTouchDown(NULL, &e.tfinger);
+					}
+					break;
+				}
+				case SDL_FINGERUP: {
+					if (!g_btnSettings->isHighlighted()) {
+						onTouchUp(false, &e.tfinger);
+					}
+					break;
+				}
+				case SDL_FINGERMOTION: {
+					if (!g_btnSettings->isHighlighted()) {
+						//only use last fingermotion event
+						SDL_Event events[20];
+						events[0] = e;
+						SDL_PumpEvents();
+						int ev_num = SDL_PeepEvents(&events[1], 19, SDL_GETEVENT, SDL_FINGERMOTION, SDL_FINGERMOTION) + 1;
 
-                                for (int i = n + 1; i < ev_num; i++) {
-                                    if (events[n].tfinger.fingerId == events[i].tfinger.fingerId) {
-                                        drop_event = true;
-                                        break;
-                                    }
-                                }
+						for (int n = ev_num - 1; n >= 0; n--) {
+							bool drop_event = false;
 
-                                if (!drop_event) {
-                                    OnTouchDrag(NULL, &events[n].tfinger);
-                                }
-                            }
-                        }
-                        break;
-                    }
-                    case SDL_MOUSEBUTTONDOWN: {
-                        if (e.button.button == SDL_BUTTON_LEFT) {
-                            bool handled = false;
+							for (int i = n + 1; i < ev_num; i++) {
+								if (events[n].tfinger.fingerId == events[i].tfinger.fingerId) {
+									drop_event = true;
+									break;
+								}
+							}
 
-                            SDL_Point pt = {e.button.x, e.button.y};
+							if (!drop_event) {
+								onTouchDrag(NULL, &events[n].tfinger);
+							}
+						}
+					}
+					break;
+				}
+				case SDL_MOUSEBUTTONDOWN: {
+					if (e.button.button == SDL_BUTTON_LEFT) {
+						bool handled = false;
 
-                            if (g_btnInfo->checked) {
-                                g_btnInfo->checked = false;
-                                SetRedrawWindow(true);
-                            } else {
-                                if (g_btnSettings->IsClicked(&pt)) {
-                                    g_btnSettings->checked = !g_btnSettings->checked;
-                                    if (g_btnSettings->checked) {
-                                        InitSettingsDialog();
-                                    } else {
-                                        ReleaseSettingsDialog();
-                                    }
-                                    SetRedrawWindow(true);
-                                    handled = true;
-                                }
+						SDL_Point pt = { e.button.x, e.button.y };
 
-                                if (g_btnSettings->checked) {
-                                    if (g_btnInfo->IsClicked(&pt)) {
-                                        g_btnInfo->checked = true;
-                                        SetRedrawWindow(true);
-                                    }
-                                    if (g_btnLockSettings->IsClicked(&pt)) {
-                                        g_btnLockSettings->checked = !g_btnLockSettings->checked;
-                                        g_settings.lock_settings = g_btnLockSettings->checked;
+						if (g_btnInfo->isHighlighted()) {
+							g_btnInfo->setCheck(false);
+							setRedrawWindow(true);
+						}
+						else {
+							handled |= g_btnSettings->onPress(&pt);
 
-                                        if (g_settings.lock_settings)
-                                            g_settings.save();
+							if (g_btnSettings->isHighlighted()) { // settings
+								handled |= g_btnInfo->onPress(&pt);
+								handled |= g_btnFullscreen->onPress(&pt);
+								handled |= g_btnLockSettings->onPress(&pt);
+								handled |= g_btnPostFaderMeter->onPress(&pt);
+								handled |= g_btnShowOfflineDevices->onPress(&pt);
+								handled |= g_btnLockToMixMIX->onPress(&pt);
+								handled |= g_btnReconnect->onPress(&pt);
+								for (int n = 0; n < 2; n++) {
+									handled |= g_btnLockToMixAUX[n]->onPress(&pt);
+								}
+								for (int n = 0; n < 4; n++) {
+									handled |= g_btnLockToMixCUE[n]->onPress(&pt);
+									handled |= g_btnLabelAUX1[n]->onPress(&pt);
+									handled |= g_btnLabelAUX2[n]->onPress(&pt);
+								}
+								handled |= g_btnServerlistScan->onPress(&pt);
+								for (vector<Button*>::iterator it = g_btnsServers.begin(); it != g_btnsServers.end(); ++it) {
+									handled |= (*it)->onPress(&pt);
+								}
+							}
+							else {
+								if (g_msg.length()) {
+									g_msg = "";
+									setRedrawWindow(true);
+								}
+								handled |= g_btnMuteAll->onPress(&pt);
+								//Click Mix/Send Buttons
+								handled |= g_btnMix->onPress(&pt);
+								for (vector<pair<string, Button*>>::iterator itB = g_btnSends.begin(); itB != g_btnSends.end(); ++itB) {
+									handled |= itB->second->onPress(&pt);
+								}
+								//Click Connect Buttons
+								for (size_t sel = 0; sel < g_btnConnect.size(); sel++) {
+									handled |= g_btnConnect[sel]->onPress(&pt);
+								}
+								handled |= g_btnSimulation->onPress(&pt);
+								//Click Select Channels
+								handled |= g_btnSelectChannels->onPress(&pt);
+								//Click Reorder Channels
+								handled |= g_btnReorderChannels->onPress(&pt);
+								handled |= g_btnChannelWidth->onPress(&pt);
+								handled |= g_btnPageLeft->onPress(&pt);
+								handled |= g_btnPageRight->onPress(&pt);
 
-                                        if (g_btnLockSettings->checked) {
-                                            g_btnLockToMixMIX->enabled = false;
-                                            g_btnLockToMixHP->enabled = false;
-                                            g_btnLockToMixAUX1->enabled = false;
-                                            g_btnLockToMixAUX2->enabled = false;
-                                            g_btnLockToMixCUE1->enabled = false;
-                                            g_btnLockToMixCUE2->enabled = false;
-                                            g_btnLockToMixCUE3->enabled = false;
-                                            g_btnLockToMixCUE4->enabled = false;
-
-                                            g_btnReconnectOn->enabled = false;
-
-                                            g_btnServerlistScan->enabled = false;
-                                            for (vector<Button *>::iterator it = g_btnsServers.begin();
-                                                 it != g_btnsServers.end(); ++it) {
-                                                (*it)->enabled = false;
-                                            }
-                                        } else {
-                                            g_btnLockToMixMIX->enabled = true;
-                                            g_btnLockToMixHP->enabled = true;
-                                            g_btnLockToMixAUX1->enabled = true;
-                                            g_btnLockToMixAUX2->enabled = true;
-                                            g_btnLockToMixCUE1->enabled = true;
-                                            g_btnLockToMixCUE2->enabled = true;
-                                            g_btnLockToMixCUE3->enabled = true;
-                                            g_btnLockToMixCUE4->enabled = true;
-
-                                            g_btnReconnectOn->enabled = true;
-
-                                            g_btnServerlistScan->enabled = true;
-                                            for (vector<Button *>::iterator it = g_btnsServers.begin();
-                                                 it != g_btnsServers.end(); ++it) {
-                                                (*it)->enabled = true;
-                                            }
-                                        }
-
-                                        SetRedrawWindow(true);
+								if (!handled) {
+									SDL_Rect rc = { (int)g_channel_offset_x, 0 };
+									SDL_GetWindowSize(g_window, &rc.w, &rc.h);
+									rc.w -= (int)(2.0f * g_channel_offset_x);
+									if (g_ua_server_connected.empty() && !g_btnSimulation->isHighlighted() && SDL_PointInRect(&pt, &rc))//offline
+									{
+										getServerList();
 									}
-									else if (g_btnShowOfflineDevices->IsClicked(&pt)) {
-										g_btnShowOfflineDevices->checked = !g_btnShowOfflineDevices->checked;
-										g_settings.show_offline_devices = g_btnShowOfflineDevices->checked;
-										UpdateMaxPages();
-										SetRedrawWindow(true);
+									else {
+										if (e.button.clicks == 2) {
+											Vector2D cursor_pt = { (float)e.button.x, (float)e.button.y };
+
+											Channel* channel = getChannelByPosition(cursor_pt);
+											if (channel) {
+												handled = true;
+												if (!g_btnSelectChannels->isHighlighted() && !g_btnReorderChannels->isHighlighted()) {
+
+													Vector2D relative_cursor_pt = cursor_pt;
+													relative_cursor_pt.subtractX(g_channel_offset_x);
+													relative_cursor_pt.setX(fmodf(relative_cursor_pt.getX(), g_channel_width));
+													relative_cursor_pt.subtractY(g_channel_offset_y);
+
+													if (channel->isTouchOnPan(&relative_cursor_pt)) {
+														if (g_btnMix->isHighlighted()) {
+															if (channel->stereo)
+																channel->changePan(-1.0, true);
+															else
+																channel->changePan(0, true);
+														}
+														else {
+															for (vector<pair<string, Button*>>::iterator itB = g_btnSends.begin(); itB != g_btnSends.end(); ++itB) {
+																if (itB->second->isHighlighted()) {
+																	Send* send = channel->getSendByName(itB->first);
+																	if (send) {
+																		send->changePan(0, true);
+																	}
+																	break;
+																}
+															}
+														}
+														setRedrawWindow(true);
+													}
+													else if (channel->isTouchOnPan2(&relative_cursor_pt)) {
+														if (g_btnMix->isHighlighted()) {
+															channel->changePan2(1.0, true);
+														}
+														setRedrawWindow(true);
+													}
+													else if (channel->isTouchOnFader(&relative_cursor_pt) && channel->type != MASTER) //level
+													{
+														if (g_btnMix->isHighlighted()) {
+															channel->changeLevel(UNITY, true);
+														}
+														else {
+															for (vector<pair<string, Button*>>::iterator itB = g_btnSends.begin(); itB != g_btnSends.end(); ++itB) {
+																if (itB->second->isHighlighted()) {
+																	Send* send = channel->getSendByName(itB->first);
+																	if (send) {
+																		send->changeLevel(UNITY, true);
+																	}
+																	break;
+																}
+															}
+														}
+														setRedrawWindow(true);
+													}
+												}
+											}
+										}
+										if (e.button.which != SDL_TOUCH_MOUSEID) {
+											Vector2D pt = Vector2D((float)e.button.x, (float)e.button.y);
+											onTouchDown(&pt, NULL);
+										}
 									}
-									else if (g_btnLockToMixMIX->IsClicked(&pt)) {
-                                        UpdateLockToMixSetting(g_btnLockToMixMIX);
-                                    } else if (g_btnLockToMixHP->IsClicked(&pt)) {
-                                        UpdateLockToMixSetting(g_btnLockToMixHP);
-                                    } else if (g_btnLockToMixAUX1->IsClicked(&pt)) {
-                                        UpdateLockToMixSetting(g_btnLockToMixAUX1);
-                                    } else if (g_btnLockToMixAUX2->IsClicked(&pt)) {
-                                        UpdateLockToMixSetting(g_btnLockToMixAUX2);
-                                    } else if (g_btnLockToMixCUE1->IsClicked(&pt)) {
-                                        UpdateLockToMixSetting(g_btnLockToMixCUE1);
-                                    } else if (g_btnLockToMixCUE2->IsClicked(&pt)) {
-                                        UpdateLockToMixSetting(g_btnLockToMixCUE2);
-                                    } else if (g_btnLockToMixCUE3->IsClicked(&pt)) {
-                                        UpdateLockToMixSetting(g_btnLockToMixCUE3);
-                                    } else if (g_btnLockToMixCUE4->IsClicked(&pt)) {
-                                        UpdateLockToMixSetting(g_btnLockToMixCUE4);
-                                    } else if (g_btnReconnectOn->IsClicked(&pt)) {
-                                        g_btnReconnectOn->checked = !g_btnReconnectOn->checked;
-                                        g_settings.reconnect_time = g_btnReconnectOn->checked ? 10000 : 0;
-                                        SetRedrawWindow(true);
-                                    } else if (g_btnServerlistScan->IsClicked(&pt)) {
-                                        g_btnServerlistScan->checked = true;
+								}
+							}
+						}
+					}
+					break;
+				}
+				case SDL_MOUSEMOTION: {
+					if (!g_btnSettings->isHighlighted()) {
+						SDL_Event* p_event = &e;
 
-                                        for (vector<Button *>::iterator it = g_btnsServers.begin();
-                                             it != g_btnsServers.end(); ++it) {
-                                            (*it)->checked = false;
-                                        }
-                                        for (int i = 0; i < UA_MAX_SERVER_LIST; i++) {
-                                            g_settings.serverlist[i] = "";
-                                        }
+						//only use last mousemotion event
+						SDL_Event events[16];
+						SDL_PumpEvents();
+						int ev_num = SDL_PeepEvents(events, 16, SDL_GETEVENT, SDL_MOUSEMOTION, SDL_MOUSEMOTION);
 
-                                        g_serverlist_defined = false;
-                                        Disconnect();
-                                        UA_GetServerList();
+						if (ev_num) {
+							p_event = &events[ev_num - 1];
+						}
 
-                                        SetRedrawWindow(true);
-                                    } else {
-                                        bool updateBtns = false;
-                                        for (vector<Button *>::iterator it = g_btnsServers.begin();
-                                             it != g_btnsServers.end(); ++it) {
-                                            if ((*it)->IsClicked(&pt)) {
+						if (p_event->motion.which != SDL_TOUCH_MOUSEID) {
+							if (p_event->motion.state & SDL_BUTTON_LMASK) {
+								Vector2D pt = Vector2D((float)p_event->button.x, (float)p_event->button.y);
+								onTouchDrag(&pt, NULL);
+							}
+						}
+					}
+					break;
+				}
+				case SDL_MOUSEBUTTONUP: {
 
-                                                if ((*it)->checked) {
-                                                    int count = 0;
-                                                    for (vector<Button *>::iterator it2 = g_btnsServers.begin();
-                                                         it2 != g_btnsServers.end(); ++it2) {
-                                                        if ((*it2)->checked)
-                                                            count++;
-                                                    }
-                                                    if (count > 1) {
-                                                        (*it)->checked = false;
-                                                        if ((*it)->text == g_ua_server_connected) {
-                                                            Disconnect();
-                                                            g_ua_server_last_connection = -1;
-                                                        }
-                                                    }
-                                                } else {
-                                                    if (g_btnServerlistScan->checked) {
-                                                        g_btnServerlistScan->checked = false;
-                                                        Disconnect();
-                                                        g_ua_server_last_connection = -1;
-                                                    }
-                                                    int count = 0;
-                                                    for (vector<Button *>::iterator it2 = g_btnsServers.begin();
-                                                         it2 != g_btnsServers.end(); ++it2) {
-                                                        if ((*it2)->checked)
-                                                            count++;
-                                                    }
-                                                    if (count < UA_MAX_SERVER_LIST) {
-                                                        (*it)->checked = true;
-                                                        g_serverlist_defined = true;
-                                                    }
-                                                }
+					for (vector<Button*>::iterator it = g_btnConnect.begin(); it != g_btnConnect.end(); ++it) {
+						(*it)->onRelease();
+					}
+					g_btnSimulation->onRelease();
+					for (vector<pair<string, Button*>>::iterator it = g_btnSends.begin(); it != g_btnSends.end(); ++it) {
+						(*it).second->onRelease();
+					}
+					g_btnSelectChannels->onRelease();
+					g_btnReorderChannels->onRelease();
+					g_btnChannelWidth->onRelease();
+					g_btnPageLeft->onRelease();
+					g_btnPageRight->onRelease();
+					g_btnMix->onRelease();
+					g_btnSettings->onRelease();
+					g_btnMuteAll->onRelease();
 
-                                                for (int i = 0; i < UA_MAX_SERVER_LIST; i++) {
-                                                    g_settings.serverlist[i] = "";
-                                                }
-                                                int i = 0;
-                                                for (vector<Button *>::iterator it2 = g_btnsServers.begin();
-                                                     it2 != g_btnsServers.end(); ++it2) {
-                                                    if ((*it2)->checked) {
-                                                        g_settings.serverlist[i] = (*it2)->text;
-                                                        i++;
-                                                    }
-                                                }
+					g_btnLockSettings->onRelease();
+					g_btnPostFaderMeter->onRelease();
+					g_btnShowOfflineDevices->onRelease();
+					g_btnLockToMixMIX->onRelease();
+					for (int n = 0; n < 4; n++) {
+						g_btnLockToMixCUE[n]->onRelease();
+						g_btnLabelAUX1[n]->onRelease();
+						g_btnLabelAUX2[n]->onRelease();
+					}
+					for (int n = 0; n < 2; n++) {
+						g_btnLockToMixAUX[n]->onRelease();
+					}
+					g_btnReconnect->onRelease();
+					g_btnServerlistScan->onRelease();
+					g_btnInfo->onRelease();
+					g_btnFullscreen->onRelease();
 
-                                                updateBtns = true;
-                                                SetRedrawWindow(true);
-                                            }
-                                        }
-                                        if (updateBtns) {
-                                            UpdateConnectButtons();
-                                        }
-                                    }
-                                } else {
-                                    if (g_msg.length()) {
-                                        g_msg = "";
-                                        SetRedrawWindow(true);
-                                    }
+					for (vector<Button*>::iterator it = g_btnsServers.begin(); it != g_btnsServers.end(); ++it) {
+						(*it)->onRelease();
+					}
 
-                                    //Click Send Buttons
-                                    for (int sel = 0; sel < g_btnSends.size(); sel++) {
-                                        if (g_btnSends[sel]->IsClicked(&pt)) {
+					if (!g_btnSettings->isHighlighted()) {
+						if (e.button.which != SDL_TOUCH_MOUSEID) {
+							if (e.button.button == SDL_BUTTON_LEFT) {
+								onTouchUp(true, NULL);
+							}
+						}
+					}
+					break;
+				}
+				case SDL_MOUSEWHEEL: {
+					if (!g_btnSettings->isHighlighted() && !g_btnReorderChannels->isHighlighted() && !g_btnSelectChannels->isHighlighted()) {
+						if (g_msg.length()) {
+							g_msg = "";
+							setRedrawWindow(true);
+						}
 
-                                            for (int n = 0; n < g_btnSends.size(); n++) {
-                                                g_btnSends[n]->checked = false;
-                                            }
-                                            g_btnMix->checked = false;
-                                            g_btnSends[sel]->checked = true;
+						int x, y;
+						SDL_GetMouseState(&x, &y);
+						Vector2D cursor_pt = { (float)x, (float)y };
 
-                                            UpdateSubscriptions();
-                                            SetRedrawWindow(true);
-                                            handled = true;
-                                        }
-                                    }
-                                    //click Mix Buttons
-                                    if (g_btnMix->IsClicked(&pt)) {
+						Channel* channel = getChannelByPosition(cursor_pt);
+						if (channel) {
+							Vector2D relative_pos_pt = cursor_pt;
+							relative_pos_pt.subtractX(g_channel_offset_x);
+							relative_pos_pt.setX(fmodf(relative_pos_pt.getX(), g_channel_width));
+							relative_pos_pt.subtractY(g_channel_offset_y);
+							if (channel->isTouchOnFader(&relative_pos_pt) || channel->isTouchOnPan(&relative_pos_pt)
+								|| channel->isTouchOnPan2(&relative_pos_pt)) {
+								float move = (float)e.wheel.y * 20.0f;
+								if (e.wheel.direction & SDL_MOUSEWHEEL_FLIPPED) {
+									move = -move;
+								}
+								onTouchDown(&cursor_pt, NULL);
+								cursor_pt.addX(move);
+								cursor_pt.subtractY(move);
+								onTouchDrag(&cursor_pt, NULL);
+								onTouchUp(true, NULL);
+							}
+						}
+					}
+					break;
+				}
+				case SDL_KEYDOWN: {
+					switch (e.key.keysym.sym) {
+					case SDLK_ESCAPE: {
+						SDL_SetWindowFullscreen(g_window, 0);
+						g_btnFullscreen->setCheck(false);
+						break;
+					}
+					case SDLK_f: {
+						toggleFullscreen();
+						break;
+					}
+					}
+					break;
+				}
+				case SDL_DISPLAYEVENT: {
+					if (e.display.event == SDL_DISPLAYEVENT_ORIENTATION
+						&& (int)e.display.display == SDL_GetWindowDisplayIndex(g_window)) {
+						gfx->Update(); // clear screen
+					}
+					break;
+				}
+				case SDL_WINDOWEVENT: {
+					switch (e.window.event) {
+					case SDL_WINDOWEVENT_EXPOSED: {
+						setRedrawWindow(true);
+						break;
+					}
+					case SDL_WINDOWEVENT_SIZE_CHANGED:
+					case SDL_WINDOWEVENT_RESIZED:
+					case SDL_WINDOWEVENT_MAXIMIZED:
+					case SDL_WINDOWEVENT_RESTORED: {
+						gfx->Update(); // clear screen
+						gfx->Resize();
+						updateLayout();
+						updateMaxPages(!g_btnSelectChannels->isHighlighted());
+						updateSubscriptions();
+						setRedrawWindow(true);
+						break;
+					}
+					}
+					break;
+				}
+				case SDL_QUIT:
+				case SDL_APP_TERMINATING: {
+					g_running = false;
+					break;
+				}
+				case SDL_USEREVENT: {
+					switch (e.user.code - g_userEventBeginNum) {
+					case EVENT_CONNECT:
+						if (g_ua_server_last_connection == -1 && g_btnConnect.size() > 0) {
+							connect(g_btnConnect[0]->getId() - ID_BTN_CONNECT);
+						}
+						else {
+							connect(g_ua_server_last_connection);
+						}
+						break;
+					case EVENT_DISCONNECT:
+						disconnect();
+						break;
+					case EVENT_DEVICES_INITIATE_RELOAD:
+						cleanUpUADevices();
+						setLoadingState(true);
+						tcpClientSend("get /devices");
+						break;
+					case EVENT_DEVICES_LOAD:
+					{
+						vector<string>* strDevices = (vector<string>*)e.user.data1;
+						cleanUpUADevices();
+						//load device info
+						tcpClientSend("subscribe /devices/0/CueBusCount");
+						g_mutex_uaDevices.lock();
+						for (vector<string>::iterator it = strDevices->begin(); it != strDevices->end(); ++it) {
+							UADevice* dev = new UADevice(*it);
+							if (dev) {
+								g_ua_devices.push_back(dev);
+							}
+						}
+						if (!g_ua_devices.empty()) {
+							tcpClientSend("get /devices/0/auxs");
+							tcpClientSend("get /devices/0/outputs");
+						}
+						for (auto it = g_ua_devices.begin(); it != g_ua_devices.end(); ++it) {
+							tcpClientSend("get /devices/" + (*it)->id + "/inputs");
+						}
+						g_mutex_uaDevices.unlock();
 
-                                        for (int n = 0; n < g_btnSends.size(); n++) {
-                                            g_btnSends[n]->checked = false;
-                                        }
-                                        g_btnMix->checked = true;
+						SAFE_DELETE(strDevices);
+						break;
+					}
+					case EVENT_SENDS_LOAD:
+					{
+						int* cueBusCount = (int*)e.user.data1;
+						if (*cueBusCount + 2 != (int)g_btnSends.size()) {
+							cleanUpSendButtons();
 
-                                        UpdateSubscriptions();
-                                        SetRedrawWindow(true);
-                                        handled = true;
-                                    }
-                                    //Click Connect Buttons
-                                    for (int sel = 0; sel < g_btnConnect.size(); sel++) {
-                                        if (g_btnConnect[sel]->IsClicked(&pt)) {
-                                            if (!g_btnConnect[sel]->checked) {
-                                                Disconnect();
-                                                Connect(g_btnConnect[sel]->id - ID_BTN_CONNECT);
-                                            } else {
-                                                Disconnect();
-                                            }
-                                            handled = true;
-                                        }
-                                    }
-                                    //Click Select Channels
-                                    if (g_btnSelectChannels->IsClicked(&pt)) {
-                                        g_btnSelectChannels->checked = !g_btnSelectChannels->checked;
-                                        if (!g_btnSelectChannels->checked) {
-                                            UpdateLayout();
-                                        }
-                                        UpdateMaxPages();
-                                        UpdateSubscriptions();
-                                        SetRedrawWindow(true);
-                                        handled = true;
-                                    }
-                                    if (g_btnChannelWidth->IsClicked(&pt)) {
+							// cues
+							for (int n = 0; n < *cueBusCount; n++) {
+								string name = "CUE " + to_string(n + 1);
+								Button* btn = addSendButton(name);
+								loadServerSettings(g_ua_server_connected, btn);
+							}
 
-                                        if (g_settings.channel_width == 0)
-                                            g_settings.channel_width = 2;
+							// 2 aux sends
+							for (int n = 0; n < 2; n++) {
+								string name = "AUX " + to_string(n + 1);
+								Button* btn = addSendButton(name);
+								loadServerSettings(g_ua_server_connected, btn);
+							}
+							updateLayout(true);
+							setRedrawWindow(true);
+						}
+						SAFE_DELETE(cueBusCount);
+						break;
+					}
+					case EVENT_INPUTS_LOAD:
+					{
+						vector<string>* pIds = (vector<string>*)e.user.data1;
+						string* devStr = (string*)e.user.data2;
 
-                                        g_settings.channel_width++;
-                                        if (g_settings.channel_width > 3)
-                                            g_settings.channel_width = 1;
+						UADevice* dev = getDeviceByUAId(*devStr);
+						if (dev) {
+							//load device info
+							for (vector<string>::iterator it = pIds->begin(); it != pIds->end(); ++it) {
 
-                                        UpdateLayout();
-                                        UpdateChannelWidthButton();
-                                        UpdateMaxPages();
-                                        UpdateSubscriptions();
-                                        SetRedrawWindow(true);
-                                        handled = true;
-                                    }
-                                    if (g_btnPageLeft->IsClicked(&pt)) {
-                                        if (g_page > 0) {
-                                            g_page--;
-                                            UpdateSubscriptions();
-                                            SetRedrawWindow(true);
-                                        }
-                                        handled = true;
-                                    }
-                                    if (g_btnPageRight->IsClicked(&pt)) {
-                                        if (g_page < (GetAllChannelsCount(false) - 1) /
-                                                     CalculateChannelsPerPage()) {
-                                            g_page++;
-                                            UpdateSubscriptions();
-                                            SetRedrawWindow(true);
-                                        }
-                                        handled = true;
-                                    }
+								if (g_channelsById.find(dev->id + ".input." + *it) == g_channelsById.end()) {
+									Channel* channel = new Channel(dev, *it, INPUT);
+									g_channelsById.insert({ dev->id + ".input." + *it, channel });
+									int order = (int)g_channelsInOrder.size();
+									g_channelsInOrder.insert({ order, channel });
+									channel->init();
+									dev->channelsTotal++;
 
-                                    if (!handled) {
-                                        SDL_Rect rc;
-                                        rc.x = g_channel_offset_x;
-                                        rc.y = 0;
-                                        SDL_GetWindowSize(g_window, &rc.w, &rc.h);
-                                        rc.w -= 2 * g_channel_offset_x;
-                                        if (g_ua_server_connected.length() == 0 &&
-                                            SDL_PointInRect(&pt, &rc))//offline
-                                        {
-                                            if (!IS_UA_SERVER_REFRESHING) {
-                                                UA_GetServerList();
-                                            }
-                                        } else {
-                                            if (e.button.clicks == 2) {
-                                                Vector2D cursor_pt = {(float) e.button.x,
-                                                                      (float) e.button.y};
+									size_t n = 2;
+									for (vector<pair<string, Button*>>::iterator it = g_btnSends.begin(); it != g_btnSends.end(); ++it) {
+										n = n % g_btnSends.size();
+										string sendId = to_string(n++);
+										Send* send = new Send(channel, sendId);
+										channel->sendsByName.insert({ it->first, send });
+										channel->sendsById.insert({ sendId, send });
+										send->init();
+									}
+								}
+							}
+							if (dev == g_ua_devices.back()) {
+								loadServerSettings(g_ua_server_connected);
+								int* index = new int;
+								*index = g_browseToChannel;
+								pushEvent(EVENT_BROWSE_TO_CHANNEL, index);
+								setLoadingState(false);
+							}
+						}
+						SAFE_DELETE(devStr);
+						SAFE_DELETE(pIds);
+						break;
+					}
+					case EVENT_AUXS_LOAD:
+					{
+						vector<string>* pIds = (vector<string>*)e.user.data1;
+						string* devStr = (string*)e.user.data2;
 
-                                                ChannelIndex channelIndex = GetChannelIdByPosition(
-                                                        cursor_pt);
-                                                if (channelIndex.IsValid()) {
-                                                    handled = true;
-                                                    if (!g_btnSelectChannels->checked) {
-                                                        Channel *channel = GetChannelPtr(
-                                                                &channelIndex);
-                                                        if (channel) {
-                                                            Vector2D relative_cursor_pt = cursor_pt;
-                                                            relative_cursor_pt.subtractX(
-                                                                    g_channel_offset_x);
-                                                            relative_cursor_pt.setX(
-                                                                    (int) relative_cursor_pt.getX() %
-                                                                    (int) g_channel_width);
-                                                            relative_cursor_pt.subtractY(
-                                                                    g_channel_offset_y);
+						UADevice* dev = getDeviceByUAId(*devStr);
+						if (dev && dev->id == "0") {
+							//load device info
+							for (vector<string>::iterator it = pIds->begin(); it != pIds->end(); ++it) {
 
-                                                            if (channel->IsTouchOnPan(
-                                                                    &relative_cursor_pt)) {
-                                                                if (g_btnMix->checked) {
-                                                                    if (channel->stereo)
-                                                                        channel->ChangePan(-1,
-                                                                                           true);
-                                                                    else
-                                                                        channel->ChangePan(0, true);
-                                                                } else {
-                                                                    for (int n = 0; n <
-                                                                                    g_btnSends.size(); n++) {
-                                                                        if (g_btnSends[n]->checked) {
-                                                                            channel->sends[n].ChangePan(
-                                                                                    0, true);
-                                                                            break;
-                                                                        }
-                                                                    }
-                                                                }
-                                                                SetRedrawWindow(true);
-                                                            } else if (channel->IsTouchOnPan2(
-                                                                    &relative_cursor_pt)) {
-                                                                if (g_btnMix->checked) {
-                                                                    channel->ChangePan2(1, true);
-                                                                }
-                                                                SetRedrawWindow(true);
-                                                            } else if (channel->IsTouchOnFader(
-                                                                    &relative_cursor_pt)) //level
-                                                            {
-                                                                if (g_btnMix->checked) {
-                                                                    channel->ChangeLevel(DB_UNITY,
-                                                                                         true);
-                                                                } else {
-                                                                    for (int n = 0; n <
-                                                                                    g_btnSends.size(); n++) {
-                                                                        if (g_btnSends[n]->checked) {
-                                                                            channel->sends[n].ChangeGain(
-                                                                                    DB_UNITY, true);
-                                                                            break;
-                                                                        }
-                                                                    }
-                                                                }
-                                                                SetRedrawWindow(true);
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                                if (!handled) {
-                                                    SDL_Event event;
-                                                    event.type = SDL_KEYDOWN;
-                                                    event.key.keysym.sym = SDLK_f;
-                                                    SDL_PushEvent(&event);
-                                                }
-                                            }
-                                            if (e.button.which != SDL_TOUCH_MOUSEID) {
-                                                Vector2D pt = Vector2D(e.button.x, e.button.y);
-                                                OnTouchDown(&pt, NULL);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        break;
-                    }
-                    case SDL_MOUSEMOTION: {
-                        if (!g_btnSettings->checked) {
-                            SDL_Event *p_event = &e;
+								if (g_channelsById.find(dev->id + ".aux." + *it) == g_channelsById.end()) {
+									Channel* channel = new Channel(dev, *it, AUX);
+									g_channelsById.insert({ dev->id + ".aux." + *it, channel });
+									int order = (int)g_channelsInOrder.size() + 1024; // ans ende sortieren
+									g_channelsInOrder.insert({ order, channel });
+									channel->init();
 
-                            //only use last mousemotion event
-                            SDL_Event events[16];
-                            SDL_PumpEvents();
-                            int ev_num = SDL_PeepEvents(events, 16, SDL_GETEVENT, SDL_MOUSEMOTION,
-                                                        SDL_MOUSEMOTION);
+									size_t n = 0;
+									for (vector<pair<string, Button*>>::iterator it = g_btnSends.begin(); it != g_btnSends.end(); ++it) {
+										if (n >= g_btnSends.size() - 2) {
+											break;
+										}
+										else {
+											n = n % g_btnSends.size();
+										}
+										string sendId = to_string(n++);
+										Send* send = new Send(channel, sendId);
+										channel->sendsByName.insert({ it->first, send });
+										channel->sendsById.insert({ sendId, send });
+										send->init();
+									}
+								}
+							}
+						}
+						SAFE_DELETE(devStr);
+						SAFE_DELETE(pIds);
+						break;
+					}
+					case EVENT_OUTPUTS_LOAD:
+					{
+						vector<string>* pIds = (vector<string>*)e.user.data1;
+						string* devStr = (string*)e.user.data2;
 
-                            if (ev_num) {
-                                p_event = &events[ev_num - 1];
-                            }
+						UADevice* dev = getDeviceByUAId(*devStr);
+						if (dev && dev->id == "0") {
+							//load device info
+							for (vector<string>::iterator it = pIds->begin(); it != pIds->end(); ++it) {
 
-                            if (p_event->motion.which != SDL_TOUCH_MOUSEID) {
-                                if (p_event->motion.state & SDL_BUTTON_LMASK) {
-                                    Vector2D pt = Vector2D(p_event->button.x, p_event->button.y);
-                                    OnTouchDrag(&pt, NULL);
-                                }
-                            }
-                        }
-                        break;
-                    }
-                    case SDL_MOUSEBUTTONUP: {
-                        if (!g_btnSettings->checked) {
-                            if (e.button.which != SDL_TOUCH_MOUSEID) {
-                                if (e.button.button == SDL_BUTTON_LEFT) {
-                                    OnTouchUp(true, NULL);
-                                }
-                            }
-                        }
-                        break;
-                    }
-                    case SDL_MOUSEWHEEL: {
-                        if (!g_btnSettings->checked) {
-                            if (g_msg.length()) {
-                                g_msg = "";
-                                SetRedrawWindow(true);
-                            }
+								if (g_channelsById.find(dev->id + ".master." + *it) == g_channelsById.end()) {
+									Channel* channel = new Channel(dev, *it, MASTER);
+									g_channelsById.insert({ dev->id + ".master." + *it, channel });
+									int order = (int)g_channelsInOrder.size() + 2048; // ans ende sortieren
+									g_channelsInOrder.insert({ order, channel });
+									channel->init();
+								}
+							}
+						}
+						SAFE_DELETE(devStr);
+						SAFE_DELETE(pIds);
+						break;
+					}
+					case EVENT_BROWSE_TO_CHANNEL: {
+						int* index = (int*)e.user.data1;
+						g_browseToChannel = *index;
+						browseToSelectedChannel(g_browseToChannel);
+						SAFE_DELETE(index);
+						break;
+					}
+					case EVENT_CHANNEL_STATE_CHANGED:
+					{
+						g_activeChannelsCount = -1;
+						g_visibleChannelsCount = -1;
+						browseToSelectedChannel(g_browseToChannel);
+						updateSubscriptions();
+						updateMaxPages(!g_btnSelectChannels->isHighlighted());
+						setRedrawWindow(true);
+						break;
+					}
+					case EVENT_UPDATE_SUBSCRIPTIONS:
+						updateSubscriptions();
+						break;
+					case EVENT_POST_FADER_METERING:
+						g_btnPostFaderMeter->setEnable(!g_settings.lock_settings);
+						g_btnPostFaderMeter->setCheck((bool)e.user.data1);
+						setRedrawWindow(true);
+						break;
+					case EVENT_AFTER_UPDATE_PROPERTIES:
+						updateMaxPages(!g_btnSelectChannels->isHighlighted());
+						updateSubscriptions();
+						setRedrawWindow(true);
+						break;
+					case EVENT_DEVICE_ONLINE:
+					{
+						string* devId = (string*)e.user.data1;
+						UADevice* dev = getDeviceByUAId(*devId);
+						if (dev)
+						{
+							dev->online = (bool)e.user.data2;
+							pushEvent(EVENT_UPDATE_SUBSCRIPTIONS);
+						}
+						SAFE_DELETE(devId);
+						break;
+					}
+					case EVENT_UPDATE_CONNECT_BUTTONS:
+						updateConnectButtons();
+						break;
+					case EVENT_RESET_ORDER:
+					{
+						g_mutex_uaDevices.lock();
+						g_channelsInOrder.clear();
+						int n = 0;
+						for (vector<UADevice*>::iterator it = g_ua_devices.begin(); it != g_ua_devices.end(); ++it) {
+							for (int i = 0; i < (*it)->channelsTotal; i++) {
+								Channel* channel = getChannelByUAIds((*it)->id, to_string(i), INPUT);
+								if (channel) {
+									g_channelsInOrder.insert({ n, channel });
+									n++;
+								}
+							}
+						}
+						for (int i = 0; i < 2; i++) {
+							Channel* channel = getChannelByUAIds(g_ua_devices.front()->id, to_string(i), AUX);
+							if (channel) {
+								g_channelsInOrder.insert({ n, channel });
+								n++;
+							}
+						}
+						Channel* channel = NULL;
+						int id = 0;
+						do {
+							channel = getChannelByUAIds(g_ua_devices.front()->id, to_string(id), MASTER);
+							if (channel) {
+								g_channelsInOrder.insert({ n + id, channel });
+							}
+							id++;
+						} while (channel);
+						g_mutex_uaDevices.unlock();
+						g_btnReorderChannels->setCheck(false);
+						updateSubscriptions();
+						setRedrawWindow(true);
+						break;
+					}
+					}
+					break;
+				}
+				}
+			}
 
-                            int x, y;
-                            SDL_GetMouseState(&x, &y);
-                            Vector2D cursor_pt = {(float) x, (float) y};
-
-                            ChannelIndex channelIndex = GetChannelIdByPosition(cursor_pt);
-                            if (channelIndex.IsValid()) {
-                                Channel *channel = GetChannelPtr(&channelIndex);
-                                if (channel) {
-                                    Vector2D relative_cursor_pt = cursor_pt;
-                                    relative_cursor_pt.subtractX(g_channel_offset_x);
-                                    relative_cursor_pt.setX((int) relative_cursor_pt.getX() %
-                                                            (int) g_channel_width);
-                                    relative_cursor_pt.subtractY(g_channel_offset_y);
-
-                                    double move = (float) e.wheel.y / 50;
-
-                                    if (e.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) {
-                                        move = -move;
-                                    }
-
-                                    if (channel->IsTouchOnPan(&relative_cursor_pt)) {
-                                        if (g_btnMix->checked) {
-                                            channel->ChangePan(move * 2);
-                                        } else {
-                                            for (int n = 0; n < g_btnSends.size(); n++) {
-                                                if (g_btnSends[n]->checked) {
-                                                    channel->sends[n].ChangePan(move);
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                        SetRedrawWindow(true);
-                                    } else if (channel->IsTouchOnPan2(&relative_cursor_pt)) {
-                                        if (g_btnMix->checked) {
-                                            channel->ChangePan2(move * 2);
-                                            SetRedrawWindow(true);
-                                        }
-                                    } else if (channel->IsTouchOnFader(&relative_cursor_pt)) {
-                                        if (channel->fader_group) {
-                                            for (int i = 0; i < MAX_UA_DEVICES; i++) {
-                                                if (g_ua_devices[i].ua_id.length() &&
-                                                    g_ua_devices[i].inputs) {
-                                                    for (int n = 0;
-                                                         n < g_ua_devices[i].inputsCount; n++) {
-                                                        if (g_ua_devices[i].inputs[n].ua_id.length() &&
-                                                            !g_ua_devices[i].inputs[n].hidden &&
-                                                            g_ua_devices[i].inputs[n].selected_to_show) {
-                                                            if (g_ua_devices[i].inputs[n].fader_group ==
-                                                                channel->fader_group) {
-                                                                if (g_btnMix->checked) {
-                                                                    g_ua_devices[i].inputs[n].ChangeLevel(
-                                                                            move);
-                                                                    SetRedrawWindow(true);
-                                                                } else {
-                                                                    for (int v = 0; v <
-                                                                                    g_btnSends.size(); v++) {
-                                                                        if (g_btnSends[v]->checked) {
-                                                                            g_ua_devices[i].inputs[n].sends[v].ChangeGain(
-                                                                                    move);
-                                                                            SetRedrawWindow(true);
-                                                                            break;
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        } else {
-                                            if (g_btnMix->checked) {
-                                                channel->ChangeLevel(move);
-                                                SetRedrawWindow(true);
-                                            } else {
-                                                for (int n = 0; n < g_btnSends.size(); n++) {
-                                                    if (g_btnSends[n]->checked) {
-                                                        channel->sends[n].ChangeGain(move);
-                                                        SetRedrawWindow(true);
-                                                        break;
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        break;
-                    }
-                    case SDL_KEYDOWN: {
-                        switch (e.key.keysym.sym) {
-                            case SDLK_ESCAPE: {
-                                SDL_SetWindowFullscreen(g_window, 0);
-                                break;
-                            }
-                            case SDLK_f: {
-                                int x, y;
-                                SDL_GetGlobalMouseState(&x, &y);
-                                if (SDL_GetWindowFlags(g_window) & SDL_WINDOW_FULLSCREEN_DESKTOP) {
-                                    SDL_SetWindowFullscreen(g_window, 0);
-
-                                    int x, y, w, h;
-                                    SDL_GetWindowPosition(g_window, &x, &y);
-                                    SDL_GetWindowSize(g_window, &w, &h);
-
-                                    int t, l, b, r;
-                                    SDL_GetWindowBordersSize(g_window, &t, &l, &b, &r);
-
-                                    SDL_Rect rc;
-                                    if (SDL_GetDisplayUsableBounds(0, &rc) == 0) {
-                                        if (x < rc.x + l)
-                                            x = rc.x + l;
-                                        if (y < rc.y + t)
-                                            y = rc.y + t;
-                                        if (w > rc.w - x - r)
-                                            w = rc.w - x - r;
-                                        if (h > rc.h - y - b)
-                                            h = rc.h - y - b;
-                                    }
-                                    SDL_SetWindowPosition(g_window, x, y);
-                                    SDL_SetWindowSize(g_window, w, h);
-                                } else
-                                    SDL_SetWindowFullscreen(g_window,
-                                                            SDL_WINDOW_FULLSCREEN_DESKTOP);
-                                SDL_WarpMouseGlobal(x, y);
-                                break;
-                            }
-                        }
-                        break;
-                    }
-                    case SDL_DISPLAYEVENT: {
-                        if (e.display.event == SDL_DISPLAYEVENT_ORIENTATION) {
-                            int w, h;
-                            SDL_GetWindowSize(g_window, &w, &h);
-                            float win_width = (float) w;
-                            float win_height = (float) h;
-                            gfx->AbortUpdate();
-                            gfx->DrawShape(0, 0, 0, 0, win_width, win_height);
-                            gfx->Update();
-                        }
-                        break;
-                    }
-                    case SDL_WINDOWEVENT: {
-                        switch (e.window.event) {
-                            case SDL_WINDOWEVENT_EXPOSED: {
-                                SetRedrawWindow(true);
-                                break;
-                            }
-                            case SDL_WINDOWEVENT_SIZE_CHANGED:
-                            case SDL_WINDOWEVENT_RESIZED:
-                            case SDL_WINDOWEVENT_MAXIMIZED:
-                            case SDL_WINDOWEVENT_RESTORED: {
-                                gfx->Resize();
-                                UpdateLayout();
-                                UpdateMaxPages();
-                                UpdateSubscriptions();
-                                SetRedrawWindow(true);
-                                break;
-                            }
-                        }
-                        break;
-                    }
-                    case SDL_QUIT:
-                    case SDL_APP_TERMINATING: {
-                        running = false;
-                        break;
-                    }
-                    case SDL_USEREVENT: {
-                        if (e.user.code == EVENT_CONNECT) {
-                            Disconnect();
-                            if (g_ua_server_last_connection == -1 && g_btnConnect.size() > 0) {
-                                Connect(g_btnConnect[0]->id - ID_BTN_CONNECT);
-                            } else {
-                                Connect(g_ua_server_last_connection);
-                            }
-                        } else if (e.user.code == EVENT_DISCONNECT) {
-                            Disconnect();
-                        }
-                        break;
-                    }
-                    default:
-                        continue;
-                }
+			if (getRedrawWindow() && GetTickCount64() - maxFpsTimer > 16) { // max aprox 60fps
+				maxFpsTimer = GetTickCount64();
+                setRedrawWindow(false);
+                draw();
             }
-
-            if (GetRedrawWindow()) {
-                SetRedrawWindow(false);
-                Draw();
-            }
+			SDL_WaitEventTimeout(NULL, 33);
         }
     }
     else
     {
-        toLog("LoadGfx failed");
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR ,"Error","LoadGfx failed", NULL);
+		writeLog(LOG_ERROR, "loadGfx failed");
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR ,"Error","loadGfx failed", NULL);
     }
 
 #ifndef __ANDROID__
 		if(!g_settings.lock_settings)
 			g_settings.save();
 #endif
-    CleanUp();
+    cleanUp();
 
 	return 0;
 }
 
-void CleanUp() {
-	TerminateAllPingThreads();
-    Disconnect();
+void cleanUp() {
+	writeLog(LOG_INFO | LOG_EXTENDED, "terminate threads");
+    disconnect();
+	g_ua_serverList.clear();
 
 #ifdef _WIN32
-    ReleaseNetwork();
+    TCPClient::releaseNetwork();
 #endif
 
-    CleanUpConnectionButtons();
-    CleanUpStaticButtons();
+	writeLog(LOG_INFO | LOG_EXTENDED, "clean up gui objects");
+    cleanUpConnectionButtons();
+    cleanUpStaticButtons();
 
+	writeLog(LOG_INFO | LOG_EXTENDED, "clean up fonts and gfx");
     gfx->DeleteFont(g_fntMain);
     gfx->DeleteFont(g_fntInfo);
     gfx->DeleteFont(g_fntChannelBtn);
     gfx->DeleteFont(g_fntLabel);
     gfx->DeleteFont(g_fntFaderScale);
     gfx->DeleteFont(g_fntOffline);
-    ReleaseAllGfx();
+    releaseAllGfx();
 
-    delete gfx;
-    gfx = NULL;
+    SAFE_DELETE(gfx);
+
+	SDL_QuitSubSystem(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_EVENTS);
 }

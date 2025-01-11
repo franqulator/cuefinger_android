@@ -1,5 +1,5 @@
-cmake_minimum_required(VERSION 3.0...3.5)
-project(SDL2_test)
+cmake_minimum_required(VERSION 3.0...3.10)
+project(SDL2_test C)
 
 include(CheckCCompilerFlag)
 include(CMakeParseArguments)
@@ -99,6 +99,8 @@ elseif(PS2)
         dmakit
         ps2_drivers
     )
+elseif(IOS OR TVOS)
+    link_libraries(SDL2::SDL2main SDL2::SDL2test SDL2::SDL2-static)
 else()
     link_libraries(SDL2::SDL2test SDL2::SDL2-static)
 endif()
@@ -366,12 +368,11 @@ if(PSP)
 endif()
 
 if(N3DS)
-    set(ROMFS_DIR "${CMAKE_CURRENT_BINARY_DIR}/romfs")
-    file(COPY ${RESOURCE_FILES} DESTINATION "${ROMFS_DIR}")
-
     foreach(APP IN LISTS SDL_TEST_EXECUTABLES)
         get_target_property(TARGET_BINARY_DIR ${APP} BINARY_DIR)
+        set(ROMFS_DIR "${TARGET_BINARY_DIR}/sdl-${APP}")
         set(SMDH_FILE "${TARGET_BINARY_DIR}/${APP}.smdh")
+        file(MAKE_DIRECTORY ${ROMFS_DIR})
         ctr_generate_smdh("${SMDH_FILE}"
             NAME "SDL-${APP}"
             DESCRIPTION "SDL2 Test suite"
@@ -428,7 +429,7 @@ add_custom_target(copy-sdl-test-resources
 )
 
 foreach(APP IN LISTS SDL_TESTS_NEEDS_RESOURCES)
-    if(PSP OR PS2)
+    if(PSP OR PS2 OR N3DS)
         foreach(RESOURCE_FILE ${RESOURCE_FILES})
             add_custom_command(TARGET ${APP} POST_BUILD COMMAND ${CMAKE_COMMAND} ARGS -E copy_if_different ${RESOURCE_FILE} $<TARGET_FILE_DIR:${APP}>/sdl-${APP})
         endforeach()

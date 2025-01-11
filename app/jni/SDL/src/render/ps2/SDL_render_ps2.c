@@ -1,6 +1,6 @@
 /*
   Simple DirectMedia Layer
-  Copyright (C) 1997-2024 Sam Lantinga <slouken@libsdl.org>
+  Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -55,7 +55,7 @@ typedef struct
 static int vsync_sema_id = 0;
 
 /* PRIVATE METHODS */
-static int vsync_handler()
+static int vsync_handler(void)
 {
     iSignalSema(vsync_sema_id);
 

@@ -1,6 +1,6 @@
 /*
   Simple DirectMedia Layer
-  Copyright (C) 1997-2024 Sam Lantinga <slouken@libsdl.org>
+  Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -1610,7 +1610,12 @@ SDL_Renderer *D3D_CreateRenderer(SDL_Window *window, Uint32 flags)
     renderer->driverdata = data;
 
     SDL_VERSION(&windowinfo.version);
-    SDL_GetWindowWMInfo(window, &windowinfo);
+    if (!SDL_GetWindowWMInfo(window, &windowinfo) ||
+        windowinfo.subsystem != SDL_SYSWM_WINDOWS) {
+        SDL_free(data);
+        SDL_SetError("Couldn't get window handle");
+        return NULL;
+    }
 
     window_flags = SDL_GetWindowFlags(window);
     SDL_GetWindowSizeInPixels(window, &w, &h);

@@ -1,6 +1,6 @@
 /*
   Simple DirectMedia Layer
-  Copyright (C) 1997-2024 Sam Lantinga <slouken@libsdl.org>
+  Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -813,7 +813,12 @@ static HRESULT D3D11_CreateSwapChain(SDL_Renderer *renderer, int w, int h)
 #if defined(__WIN32__) || defined(__WINGDK__)
         SDL_SysWMinfo windowinfo;
         SDL_VERSION(&windowinfo.version);
-        SDL_GetWindowWMInfo(renderer->window, &windowinfo);
+        if (!SDL_GetWindowWMInfo(renderer->window, &windowinfo) ||
+            windowinfo.subsystem != SDL_SYSWM_WINDOWS) {
+            SDL_SetError("Couldn't get window handle");
+            result = E_FAIL;
+            goto done;
+        }
 
         result = IDXGIFactory2_CreateSwapChainForHwnd(data->dxgiFactory,
                                                       (IUnknown *)data->d3dDevice,
