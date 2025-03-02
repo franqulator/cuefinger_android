@@ -64,7 +64,7 @@ If you like and use Cuefinger you can donate by buying one of my songs on <a hre
 ## Android
 ### Sideload APK
 You can download the apk-file here:
-<a href ="https://github.com/franqulator/cuefinger/tree/main/build/android">https://github.com/franqulator/cuefinger/tree/main/build/android</a>
+<a href ="https://github.com/franqulator/cuefinger_android/tree/master/app/release">https://github.com/franqulator/cuefinger_android/tree/master/app/release</a>
 
 Soon on Google Play store.
 
