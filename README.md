@@ -70,40 +70,9 @@ Soon on Google Play store.
 
 ---
 
-## Windows 10/11
-### Use binary
-Just chose the fitting *.exe and run it.
+## Windows 10/11 & Linux
+Visit <a href ="https://github.com/franqulator/cuefinger">https://github.com/franqulator/cuefinger</a>
 
-### Compile with Visual Studio 2022
-You need SDL2 developer package (https://github.com/libsdl-org/SDL/releases/tag/release-2.30.0).<br>
-You can use the Visual Studio 2022 project files, make sure that you copy the SDL2 include and bin into the project folder or change the include and lib paths in the gfx2d_sdl.h
-
----
-
-## Linux
-### Snapstore
-<a href="https://snapcraft.io/cuefinger">
-  <img alt="Get it from the Snap Store" src="https://snapcraft.io/static/images/badges/en/snap-store-black.svg" />
-</a>
-
-### Use binary
-The compiled file is target for Ubuntu 22.04 x64. You might have to install the SDL2 runtimes:
-- Open Terminal
-> sudo apt-get install libsdl2-2.0<br>
-> sudo apt-get install libsdl2-ttf-2.0-0
-- Make sure it has permission to run as executable
-> chmod +x $file
-
-### Compile with makefile
-You might need to install the SDL2 developer libraries:
-- Open Terminal
->sudo apt-get install libsdl2-dev<br>
->sudo apt-get install libsdl2-ttf-dev
-- navigate to the src folder and run make:
-> cd src<br>
-> make
-- you can now run cuefinger
-> ../build/linux/cuefinger
 
 ---
 
