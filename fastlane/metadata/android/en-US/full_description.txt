@@ -1,0 +1,16 @@
+With Cuefinger you can remote control Universal Audio's Console Application via LAN/Wifi.
+
+In a recording studio this gives the studio musician the possibility to access the cue mix via a linux, android or windows tablet/phone. As an example, you could use an UA Apollo interface with 4 cue busses in combination with 4 tablets/phones allowing 4 musicians to control their cue mix individually.
+
+Features:
+
+Volume, Pan, Mute, Solo, Pre/Post of the Monitor, the CUE- and AUX-Mixes
+Responsive design allows mixing also on tiny screens
+Show only the channels you need via select channels
+Reorder channels
+Mix groups
+Color coding
+Lock to mix (e.g. allow access only to CUE 1)
+Mute All button
+Easily switch between servers
+Low on CPU usage and uses GPU acceleration

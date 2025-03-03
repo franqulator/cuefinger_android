@@ -1,0 +1,14 @@
+Mit Cuefinger können Sie die Konsolenanwendung von Universal Audio über LAN/Wifi fernsteuern. 
+
+In einem Tonstudio hat der Studiomusiker so die Möglichkeit, über ein Linux-, Android- oder Windows-Tablet/Phone auf den Cue-Mix zuzugreifen. Als Beispiel: man kann ein UA Apollo Interface mit 4 Cue-Bussen in Kombination mit 4 Tablets/Smartphones verwenden, mit denen 4 Musiker ihren Cue-Mix individuell steuern können. 
+
+Funktionen: 
+Volume, Pan, Mute, Solo, Pre/Post des Monitors, die CUE- und AUX-Mixe
+Responsives Design ermöglicht das Mischen auch auf kleinen Bildschirmen
+Lass dir nur die Kanäle anzeigen, die du benötigst
+Kanäle neu anordnen Gruppen mischen
+Farbmarkierung
+Lock to Mix (z.B. nur Zugriff auf CUE 1 erlauben)
+"Mute All"-Funktion
+Einfacher Wechsel zwischen Servern
+Geringe CPU-Auslastung und Verwendung von GPU-Beschleunigung
