@@ -1,0 +1,102 @@
+--- v1.3.8 ---
+- Bugfix: missing redraw after renaming channel
+- Bugfix: wrong page after selecting channel/channel width in some situtations
+- Bugfix: unhide all channels also did unhide locked channels
+- Bugfix: cue/aux Buttons wouldn't be drawn after connecting in some situtations
+- Bugfix: show-hide-state of aux/monitor fader wouldn't be restored on reconnect
+- Update auf SDL 2.30.11
+- Setting timeout from 1 to 3 s
+- Fixed initial (only displayed) fader jump
+
+--- v1.3.7 ---
+- Bugfix: Monitor-Channel missing after reset channel order
+
+--- v1.3.6 ---
+- Bugfixes
+
+--- v1.3.5 ---
+- Improved looking up servers 
+- Added simulation
+- Bugfixes
+
+--- v1.3.4 ---
+- Reduced power consumption
+- Improved performance and layout
+- Bugfixes
+
+--- v1.3.3 ---
+- Bugfixes
+- Stability and performance improvements
+- Layout improvements
+
+--- v1.3.2 ---
+- Hold Mute All button to unmute all channels (instead of just previously muted by All Mute)
+- Hold Select Channels to select/unselect all channels
+- Reload when IO-Setup or devices added/removed
+- Bugfix: CR-Master didn't work with some Apollos
+- Bugfix: Scrolling the the middle channel when toggle select channel
+- Bugfix: Didn't connect automatically when serverlist defined and > 1
+- Bugfix: On post fader meter, levels could paint outside of meter bar
+- Layout optimized
+
+
+--- v1.3.1 ---
+- Improved fader movement
+- Bugifx: fader jump in fader group
+- Bugfix: possible incorrect levels of fader group
+- Bugfix: possible crash at startup
+- Bugfix: missing font in release-package
+
+--- v1.3.0 ---
+- Reorder channels, save and restore order, reset order by holding reorder-button
+- Fader optimized and new meterscale
+- Clip LED
+- Mute All
+- AUX Returns
+- Override name for AUX 1/AUX 2
+- master für MIX (ctrl-room)
+- Changed show/hide override via channel name to ?s or ?h (e.g. Vocals ?s)
+- Colorcoding via channel name (use ?r for red, e.g. Vocals ?r; rgbypo)
+- Fixed levels in fadergroup
+- Setting to show/hide offline devices
+- Setting to switch MIX meter to pre/post
+- Save and restore scroll state for each server
+- Buttonhandling optimized
+- Moved toggle fullscreen to settings
+- Layout optimized
+- Performance optimized
+- Fixed reload when session loaded in Console
+- Bugfixes
+
+
+--- v1.2.0 ---
+- GUI for settings
+- Performance improvements
+- Minor bugfixes
+- Preview for Android
+
+
+--- v1.1.0 ---
+- Automatically try to reconnect to last used server, when connection was lost
+- Gfx-Engine update
+- Improved performance and stability
+- Bugfixes
+
+
+--- v1.0.2 ---
+- changed the location of settings and log to the user folder to prevent issues with write permissions
+
+--- v1.0.1 beta ---
+
+- Bugfix: fixed font scaling after toggle fullscreen
+- Bugfix: fixed empty page in certain conditions after resizing window
+- Bugfix: fixed possible crash when more than one UA Console server where found
+- Bugfix: channels show/hide via prefix (#,!) weren't un-/subscribed 
+- Bugfix: fixed toggle fullscreen reposition of mouse cursor
+- Bugfix: lock_to_mix 'MIX' didn't work
+- added timeout to check if connection is alive
+- layout improved
+- perfomance improved
+- timer optimized
+- Windows: upgrade to SDL 2.30.0 and SDL_TTF 2.22.0
+- Manual added
